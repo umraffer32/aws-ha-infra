@@ -5,6 +5,7 @@ A multi-AZ AWS infrastructure deployed with Terraform.
 ![Architecture diagram](images/architecture.svg)
 
 ### NAT Gateway vs NAT Instance
+---
 
 **Choice:** NAT Instances (t2.micro, Debian), one per AZ, bootstrapped via user_data.
 
@@ -30,6 +31,7 @@ The `source_dest_check = false` flag on the ENI is set in Terraform — it's an 
 **Side benefit:** because private instances retain outbound internet via NAT, SSM Session Manager works without VPC interface endpoints (~$42/month for the `ssm` / `ssmmessages` / `ec2messages` trio across two AZs). Endpoints would only be required if I'd chosen fully isolated private subnets — appropriate for compliance-bound environments (HIPAA, PCI, FedRAMP), overkill here.
 
 ### 2 AZs vs 3 AZs
+---
 
 **Choice:** 2 Availability Zones.
 
@@ -48,6 +50,7 @@ This stack is a stateless web app behind an ALB, backed by managed RDS. Neither 
 **When this decision flips:** if I added a quorum-based component (a self-managed Kafka cluster, a Consul service mesh, a self-managed etcd-backed system), 3 AZs becomes the right answer immediately. The architecture's redundancy level should match the data plane's failure model, not exceed it for show.
 
 ### ALB vs NLB
+---
 
 **Choice:** Application Load Balancer (ALB).
 
