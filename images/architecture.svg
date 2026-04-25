@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 530" width="720" height="530" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+  <title>Highly Available AWS Architecture Across Two Availability Zones</title>
+  <desc>VPC contains two AZs, each with a public subnet hosting a NAT gateway and a private subnet hosting an Auto Scaling Group and RDS instance. An Application Load Balancer spans both AZs.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1 L8 5 L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <!-- White background so it looks clean on GitHub -->
+  <rect x="0" y="0" width="720" height="530" fill="#FFFFFF"/>
+
+  <!-- Route 53 / Users -->
+  <rect x="290" y="20" width="140" height="40" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+  <text x="360" y="45" text-anchor="middle" font-size="14" font-weight="500" fill="#2C2C2A">Route 53 / Users</text>
+
+  <line x1="360" y1="60" x2="360" y2="100" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Internet Gateway -->
+  <rect x="290" y="100" width="140" height="36" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+  <text x="360" y="123" text-anchor="middle" font-size="14" font-weight="500" fill="#2C2C2A">Internet Gateway</text>
+
+  <line x1="360" y1="136" x2="360" y2="180" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- VPC outer container -->
+  <rect x="40" y="155" width="640" height="355" rx="20" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+  <text x="60" y="176" font-size="12" fill="#444441">VPC (10.0.0.0/16)</text>
+
+  <!-- ALB strip -->
+  <rect x="100" y="180" width="520" height="50" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="360" y="200" text-anchor="middle" font-size="14" font-weight="500" fill="#0C447C">Application Load Balancer</text>
+  <text x="360" y="218" text-anchor="middle" font-size="12" fill="#185FA5">Spans both AZs</text>
+
+  <!-- AZ-A container -->
+  <rect x="60" y="250" width="290" height="240" rx="12" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="78" y="270" font-size="14" font-weight="500" fill="#085041">Availability Zone A</text>
+
+  <!-- AZ-A Public subnet -->
+  <rect x="80" y="284" width="250" height="64" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="92" y="302" font-size="14" font-weight="500" fill="#0C447C">Public subnet</text>
+  <text x="92" y="322" font-size="12" fill="#185FA5">NAT Gateway</text>
+  <text x="92" y="338" font-size="12" fill="#185FA5">Internet egress for AZ-A</text>
+
+  <!-- AZ-A Private subnet -->
+  <rect x="80" y="358" width="250" height="116" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="92" y="376" font-size="14" font-weight="500" fill="#3C3489">Private subnet</text>
+  <text x="92" y="396" font-size="12" fill="#534AB7">EC2 (Auto Scaling Group)</text>
+  <text x="92" y="414" font-size="12" fill="#534AB7">RDS primary</text>
+  <text x="92" y="432" font-size="12" fill="#534AB7">No internet ingress</text>
+
+  <!-- AZ-B container -->
+  <rect x="370" y="250" width="290" height="240" rx="12" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="388" y="270" font-size="14" font-weight="500" fill="#085041">Availability Zone B</text>
+
+  <!-- AZ-B Public subnet -->
+  <rect x="390" y="284" width="250" height="64" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="402" y="302" font-size="14" font-weight="500" fill="#0C447C">Public subnet</text>
+  <text x="402" y="322" font-size="12" fill="#185FA5">NAT Gateway</text>
+  <text x="402" y="338" font-size="12" fill="#185FA5">Internet egress for AZ-B</text>
+
+  <!-- AZ-B Private subnet -->
+  <rect x="390" y="358" width="250" height="116" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="402" y="376" font-size="14" font-weight="500" fill="#3C3489">Private subnet</text>
+  <text x="402" y="396" font-size="12" fill="#534AB7">EC2 (Auto Scaling Group)</text>
+  <text x="402" y="414" font-size="12" fill="#534AB7">RDS standby</text>
+  <text x="402" y="432" font-size="12" fill="#534AB7">Auto-failover from AZ-A</text>
+
+</svg>
