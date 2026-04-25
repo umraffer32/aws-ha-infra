@@ -46,3 +46,13 @@ Two AZs is the standard HA baseline in AWS, not a compromise on it. The ALB requ
 This stack is a stateless web app behind an ALB, backed by managed RDS. Neither tier has a quorum requirement. The ALB and Multi-AZ RDS each have their resilience semantics defined against 2 AZs. A third AZ would mean a third NAT instance, a third set of subnets and route tables, a third copy of every ASG instance, and roughly 50% more idle cost — buying nothing the workload can use.
 
 **When this decision flips:** if I added a quorum-based component (a self-managed Kafka cluster, a Consul service mesh, a self-managed etcd-backed system), 3 AZs becomes the right answer immediately. The architecture's redundancy level should match the data plane's failure model, not exceed it for show.
+
+### ALB vs NLB
+
+**Choice:** Application Load Balancer (ALB).
+
+The workload is an HTTP application. The ALB operates at Layer 7, which means it can inspect requests and make routing decisions based on path, host header, or other HTTP attributes. It supports HTTP-aware health checks (e.g. `GET /health` returns 200), TLS termination, cookie-based session stickiness, and integrates natively with target groups backed by an Auto Scaling Group.
+
+**Why not NLB:** Network Load Balancer operates at Layer 4 (TCP/UDP) and is the right answer for non-HTTP protocols, ultra-high-throughput workloads (millions of connections/second, sub-millisecond latency), or when downstream systems need to whitelist a static IP. None of those apply here. Choosing NLB for a standard web app would mean giving up every Layer 7 feature — path routing, smart health checks, TLS at the edge — to gain raw performance the workload doesn't need.
+
+**When this decision flips:** if I were fronting a non-HTTP service (a game server, a database proxy, an MQTT broker) or needed a static IP for an upstream firewall to whitelist, NLB would become correct.
