@@ -28,3 +28,21 @@ The `source_dest_check = false` flag on the ENI is set in Terraform — it's an 
 **When this decision flips:** in a production environment with real traffic and SLAs, NAT Gateways become correct. The ~$65/month premium buys managed HA and removes a class of operational toil that easily costs more than that in engineering time the first time something breaks at 2am. The choice here isn't "NAT Instance is better" — it's "NAT Instance is better *for this context*: a free-tier portfolio environment where the cost ratio is extreme and downtime is harmless."
 
 **Side benefit:** because private instances retain outbound internet via NAT, SSM Session Manager works without VPC interface endpoints (~$42/month for the `ssm` / `ssmmessages` / `ec2messages` trio across two AZs). Endpoints would only be required if I'd chosen fully isolated private subnets — appropriate for compliance-bound environments (HIPAA, PCI, FedRAMP), overkill here.
+
+### 2 AZs vs 3 AZs
+
+**Choice:** 2 Availability Zones.
+
+Two AZs is the standard HA baseline in AWS, not a compromise on it. The ALB requires a minimum of 2 subnets in different AZs by design. RDS Multi-AZ deployments are inherently two-zone (primary + synchronous standby). The Well-Architected Framework treats 2 AZs as the bar that distinguishes "HA" from "single point of failure" — adding a third AZ doesn't move you across that bar; it adds margin past it.
+
+**When a third AZ would actually matter:**
+
+- **Quorum-based systems.** Distributed consensus (etcd, Consul, Zookeeper, Kafka with `min.insync.replicas=2`) requires a majority of nodes to acknowledge a write. With 3 nodes across 3 AZs, losing one AZ still leaves a 2-node majority and writes continue. With 2 nodes across 2 AZs, losing one AZ takes the cluster below quorum and writes stop. This is the canonical "you genuinely need 3 AZs" workload.
+- **Read-heavy, latency-sensitive read replicas.** Spreading replicas across 3 AZs reduces the chance any given client is far from a healthy replica.
+- **Strict regulatory uptime requirements** that mandate redundancy beyond single-failure tolerance.
+
+**Why 3 AZs would have been wasted here:**
+
+This stack is a stateless web app behind an ALB, backed by managed RDS. Neither tier has a quorum requirement. The ALB and Multi-AZ RDS each have their resilience semantics defined against 2 AZs. A third AZ would mean a third NAT instance, a third set of subnets and route tables, a third copy of every ASG instance, and roughly 50% more idle cost — buying nothing the workload can use.
+
+**When this decision flips:** if I added a quorum-based component (a self-managed Kafka cluster, a Consul service mesh, a self-managed etcd-backed system), 3 AZs becomes the right answer immediately. The architecture's redundancy level should match the data plane's failure model, not exceed it for show.
