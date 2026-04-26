@@ -59,3 +59,7 @@ The workload is an HTTP application. The ALB operates at Layer 7, which means it
 **Why not NLB:** Network Load Balancer operates at Layer 4 (TCP/UDP) and is the right answer for non-HTTP protocols, ultra-high-throughput workloads (millions of connections/second, sub-millisecond latency), or when downstream systems need to whitelist a static IP. None of those apply here. Choosing NLB for a standard web app would mean giving up every Layer 7 feature — path routing, smart health checks, TLS at the edge — to gain raw performance the workload doesn't need.
 
 **When this decision flips:** if I were fronting a non-HTTP service (a game server, a database proxy, an MQTT broker) or needed a static IP for an upstream firewall to whitelist, NLB would become correct.
+
+### Terraform deployment role
+
+> **TODO**: Currently Terraform authenticates via my SSO `AdministratorAccess` session. The proper pattern is to assume a scoped `TerraformDeploy` role with `PowerUserAccess` plus a name-prefix-bounded IAM policy. Documented as a follow-up improvement.
