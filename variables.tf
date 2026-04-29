@@ -15,3 +15,15 @@ variable "project_name" {
   type        = string
   default     = "ha"
 }
+
+variable "debian_version" {
+  description = "Major Debian version for NAT/app AMIs (e.g., 12, 13)"
+  type        = string
+  default     = "13"
+}
+
+variable "ubuntu_version" {
+  description = "Ubuntu LTS version for AMI lookup (e.g., 22.04, 24.04)"
+  type        = string
+  default     = "24.04"
+}
