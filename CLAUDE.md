@@ -109,6 +109,7 @@ The compute module (`modules/compute/`) deploys NAT instances via Auto Scaling G
 
 - **Security group** (`aws_security_group.nat`): allows all inbound from VPC CIDR, all outbound
 - **Launch template** (`aws_launch_template.nat`): Debian 13 AMI, t2.micro, SSM profile (`SSM-EC2`), IMDSv2 enforced, user_data bootstraps NAT behavior
+  - **Gotcha:** profile name is `SSM-EC2` (hyphen) — `SSM_EC2` (underscore) does not exist in this account
 - **ASGs** (`aws_autoscaling_group.nat`): one per AZ (count = 2), min=max=desired=1, deployed in public subnets
 
 **user_data bootstrap sequence:**
