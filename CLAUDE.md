@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A multi-AZ AWS infrastructure for a highly available web application, deployed with Terraform. The stack prioritizes **cost efficiency within the AWS Free Tier** while maintaining HA across 2 availability zones.
 
-**Current Status:** Network layer is implemented (VPC, subnets, NAT instances, route tables). Compute (EC2/ALB), database (RDS), and monitoring layers are planned for future phases.
+**Current Status:** Network layer and compute/NAT layer are implemented. Database (RDS) and monitoring layers are planned for future phases.
 
 See README.md for detailed architectural decisions and trade-offs.
 
@@ -15,19 +15,24 @@ See README.md for detailed architectural decisions and trade-offs.
 ```
 .
 ├── main.tf                      # Root module - orchestrates child modules
-├── variables.tf                 # Root-level input variables
+├── variables.tf                 # Root-level input variables (region, profile, AMI versions)
 ├── outputs.tf                   # VPC and network exports for downstream modules
 ├── providers.tf                 # AWS provider config (region, profile)
+├── data.tf                      # AMI lookups (Debian 13, Ubuntu 24.04)
 ├── terraform.tfstate            # Current state (committed to git for this demo)
 ├── .terraform.lock.hcl          # Provider version lock
 ├── .gitignore                   # Standard Terraform/OS exclusions
 ├── README.md                    # Architecture decisions and trade-offs
 ├── CLAUDE.md                    # This file
 │
-└── modules/network/
-    ├── main.tf                  # VPC module instantiation + future networking
-    ├── variables.tf             # Network module inputs
-    └── outputs.tf               # VPC, subnet, route table exports
+├── modules/network/
+│   ├── main.tf                  # VPC module instantiation + route tables
+│   ├── variables.tf             # Network module inputs
+│   └── outputs.tf               # VPC, subnet, route table exports
+│
+└── modules/compute/
+    ├── main.tf                  # NAT SG, launch template, per-AZ ASGs
+    └── variables.tf             # Compute module inputs
 ```
 
 ## Prerequisites
@@ -69,6 +74,8 @@ terraform destroy
 | `region` | `us-west-2` | AWS region |
 | `aws_profile` | `mrpocket2726` | AWS CLI/SSO profile |
 | `project_name` | `ha` | Resource name prefix and tag value |
+| `debian_version` | `13` | Debian major version for NAT instance AMI |
+| `ubuntu_version` | `24.04` | Ubuntu LTS version for future app AMIs |
 
 **Override via:**
 - CLI flags: `terraform apply -var region=us-east-1`
@@ -77,26 +84,41 @@ terraform destroy
 
 ## Architecture
 
-### Current Implementation: Network Layer
+### Current Implementation: Network + Compute Layers
 
 The network module (`modules/network/`) instantiates the [terraform-aws-modules/vpc module](https://registry.terraform.io/modules/terraform-aws-modules/vpc/aws/~5.0) with custom configurations:
 
 ```
 VPC (10.0.0.0/16)
 ├── Public Subnets (IGW egress)
-│   ├── AZ-1: 10.0.1.0/24  (for NAT instance, ALB)
-│   └── AZ-2: 10.0.2.0/24  (for NAT instance, ALB)
+│   ├── AZ-1: 10.0.1.0/24  (NAT instance, ALB)
+│   └── AZ-2: 10.0.2.0/24  (NAT instance, ALB)
 │
 └── Private Subnets (NAT instance egress)
-    ├── AZ-1: 10.0.11.0/24 (for app/database)
-    └── AZ-2: 10.0.12.0/24 (for app/database)
+    ├── AZ-1: 10.0.11.0/24 (app/database)
+    └── AZ-2: 10.0.12.0/24 (app/database)
 ```
 
 **Key settings in `modules/network/main.tf`:**
-- `enable_nat_gateway = false` — we manage NAT via EC2 instances, not managed NAT Gateway
+- `enable_nat_gateway = false` — NAT is managed via EC2 instances, not the managed service
 - `enable_vpn_gateway = false` — VPN not in scope
-- Route tables created for public (→ IGW) and private (→ NAT) subnets
+- Route tables for public (→ IGW) and private (→ NAT) subnets
 - Tagging with `Project`, `ManagedBy`, `Environment`
+
+The compute module (`modules/compute/`) deploys NAT instances via Auto Scaling Groups:
+
+- **Security group** (`aws_security_group.nat`): allows all inbound from VPC CIDR, all outbound
+- **Launch template** (`aws_launch_template.nat`): Debian 13 AMI, t2.micro, SSM profile (`SSM-EC2`), IMDSv2 enforced, user_data bootstraps NAT behavior
+- **ASGs** (`aws_autoscaling_group.nat`): one per AZ (count = 2), min=max=desired=1, deployed in public subnets
+
+**user_data bootstrap sequence:**
+1. Installs `amazon-ssm-agent` via `.deb` download (no apt repo needed)
+2. Installs `iptables-persistent`
+3. Enables `net.ipv4.ip_forward` via sysctl
+4. Calls `aws ec2 modify-instance-attribute --no-source-dest-check` via IMDSv2 (instance self-disables SRC/DST check)
+5. Adds iptables MASQUERADE + FORWARD rules and persists them
+
+**Known issue:** `source_dest_check = false` inside `network_interfaces` block of launch template is commented out — the AWS provider does not support this field on launch templates. The workaround is the self-call in user_data, which requires the SSM-EC2 instance profile to have `ec2:ModifyInstanceAttribute` permission.
 
 ### Design Decisions
 
@@ -106,11 +128,7 @@ VPC (10.0.0.0/16)
 
 **Why:** NAT Gateway costs ~$32/month per AZ. Two AZs = ~$65/month baseline. NAT Instances on t2.micro are fully free under the 12-month free tier (~$0), then ~$17/month after. This design trades **managed HA** and **operational simplicity** for **cost savings** that dominate in a portfolio/demo environment.
 
-**Implementation details** (to be added to user_data when compute module is built):
-- Enable IPv4 forwarding: `net.ipv4.ip_forward=1` in `/etc/sysctl.d/`
-- Install and persist iptables MASQUERADE rule
-- Set `source_dest_check = false` on the instance's ENI (AWS-level API setting required for NAT to function)
-- Deploy in an Auto Scaling Group (min=max=desired=1 per AZ) for per-AZ HA
+**Implementation:** See `modules/compute/main.tf`. The launch template user_data enables IPv4 forwarding, installs iptables-persistent, adds MASQUERADE rules, and self-disables source/dest check via the AWS API (since the Terraform launch template resource doesn't support `source_dest_check = false` in `network_interfaces`). One ASG per AZ (min=max=desired=1) provides per-AZ HA.
 
 **Trade-offs accepted:**
 - Instance failure requires EC2 recovery (vs. transparent failover with NAT Gateway)
@@ -146,12 +164,17 @@ VPC (10.0.0.0/16)
 
 ## Future Phases
 
-### Phase 1: Compute (Planned)
+### Phase 1: Compute (Implemented)
 
-- EC2 Auto Scaling Group in private subnets (one per AZ)
-- Application Load Balancer in public subnets, targets the ASG
-- Security groups (ALB → App, App → RDS)
-- Module: `modules/compute/`
+- NAT instances via ASG (one per AZ) in public subnets — `modules/compute/`
+- Bootstrapped via user_data (IPv4 forwarding, iptables, SSM agent)
+- IMDSv2 enforced, SSM instance profile for agent + self-modify SRC/DST check
+
+**Still needed in compute phase:**
+- App EC2 ASG in private subnets
+- ALB in public subnets targeting the app ASG
+- App security groups (ALB → App, App → RDS)
+- `outputs.tf` for compute module (ASG ARNs, SG IDs)
 
 ### Phase 2: Database (Planned)
 
@@ -172,10 +195,11 @@ VPC (10.0.0.0/16)
    - Should be: Assume a scoped `TerraformDeploy` role with `PowerUserAccess` + name-prefix-bounded IAM policy
    - Benefit: Principle of least privilege; prevents accidental infrastructure changes outside this project
 
-2. **NAT Instance Bootstrapping** (compute phase)
-   - User_data script to enable IPv4 forwarding, install iptables, persist rules
-   - Set `source_dest_check = false` on ENI in Terraform
-   - Auto Scaling Group (min=max=desired=1 per AZ)
+2. **`source_dest_check` in launch template** (compute phase)
+   - The Terraform `aws_launch_template` resource does not support `source_dest_check = false` within `network_interfaces`
+   - Current workaround: user_data calls `aws ec2 modify-instance-attribute --no-source-dest-check` via IMDSv2
+   - Requires: SSM-EC2 instance profile to have `ec2:ModifyInstanceAttribute` on `arn:aws:ec2:*:*:instance/*`
+   - `modules/compute/main.tf` has the field commented out with an explanatory note
 
 3. **terraform.tfstate** in git (state management follow-up)
    - Current: Committed to git for demo/personal project simplicity
@@ -234,6 +258,7 @@ Or view in the AWS Console: VPC dashboard → Your VPCs → Filter by tag `Proje
 **Monthly estimate (2 AZs, free tier):**
 - VPC, subnets, route tables: ~$0
 - NAT Instances (t2.micro ×2): $0–$34/month (free for 12 months, then ~$17/month)
+- SSM Agent: $0 (no additional charge for SSM on EC2)
 - **Total:** $0–$34/month
 
 **To teardown and save costs:**
