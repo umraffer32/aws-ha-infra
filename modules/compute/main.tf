@@ -32,6 +32,12 @@ resource "aws_launch_template" "nat" {
     security_groups             = [aws_security_group.nat.id]
   }
 
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
   user_data = base64encode(<<-EOF
     #!/bin/bash
     set -eux
@@ -81,7 +87,7 @@ resource "aws_autoscaling_group" "nat" {
 
   tag {
     key                 = "Name"
-    value               = "NAT-${var.public_subnet_ids[count.index]}-${var.azs[count.index]}"
+    value = "NAT-${substr(var.azs[count.index], length(var.azs[count.index]) - 2, 2)}"
     propagate_at_launch = true
   }
 }
