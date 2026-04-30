@@ -12,3 +12,15 @@ module "network" {
   project_name = var.project_name
   azs          = local.azs
 }
+
+module "compute" {
+  source = "./modules/compute"
+
+  project_name         = var.project_name
+  vpc_id               = module.network.vpc_id
+  azs                  = local.azs
+  public_subnet_ids    = module.network.public_subnet_ids
+  ami_id               = data.aws_ami.debian.id
+  instance_type        = "t2.micro"
+  iam_instance_profile = "SSM-EC2"
+}
