@@ -17,7 +17,7 @@ A multi-AZ AWS infrastructure for a highly available web application, deployed w
 - Updated `ssm-connect.sh` to list `Private-*` instances.
 - Performed full environment recycle: `terraform destroy -auto-approve` then `terraform apply -auto-approve`.
 - Verified private instance management channel via SSM by running commands on both private instances with `AWS-RunShellScript` and confirming successful output.
-- **Repository state note:** These changes are present locally but **have not been committed or pushed**.
+- **Repository state note (2026-05-01):** These changes are now committed and pushed to `main`; working tree is clean.
 
 See README.md for detailed architectural decisions and trade-offs.
 
