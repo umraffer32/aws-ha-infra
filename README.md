@@ -30,6 +30,7 @@ VPC (10.0.0.0/16)
 | Private Compute | Ubuntu 24.04 t2.micro instances, one per AZ, ASG-managed |
 | Route Self-Healing | EventBridge + Lambda (`modules/nat_route_healer/`) |
 | Instance Access | AWS SSM Session Manager (no SSH, no keypairs) |
+| Audit Logging | CloudTrail → CloudWatch Logs (`/aws/cloudtrail/main`) |
 | Load Balancing | ALB (planned) |
 | Database | RDS Multi-AZ (planned) |
 
@@ -63,6 +64,16 @@ The standard remedy is `terraform apply`, which re-reads the live NAT instance E
 6. Private subnet egress resumes without any human action.
 
 **What it doesn't do:** The route is updated when the ASG fires the launch event — not when the NAT instance is actually ready to forward traffic. NAT user_data takes several minutes to complete (apt installs, iptables setup, source/dest check disable). So there's a window where the route is `active` pointing at a valid ENI, but the NAT instance itself isn't yet forwarding packets. This is a known limitation of the NAT instance approach, not a healer bug.
+
+## Audit Logging
+
+`modules/monitoring/` ships a CloudTrail trail that streams all AWS API activity into CloudWatch Logs.
+
+**What it captures:** Every API call made against the account in us-west-2 — EC2 instance launches and terminations, SSM session starts and command invocations, IAM/STS credential activity, S3 access, and CloudTrail self-queries. Global service events (IAM, STS) are included.
+
+**Where it lands:** CloudWatch Logs log group `/aws/cloudtrail/main`, 1-day retention. A backing S3 bucket (`main-cloudtrail-<account-id>`) stores raw trail data with a matching 1-day lifecycle expiration.
+
+**Volume observed:** 920+ CloudTrail events and 102 Lambda healer events as of 2026-05-01, with CloudTrail ingesting at ~88 events/min under active load. Dominant event types: SSM `UpdateInstanceInformation` heartbeats, IAMUser console reads (`DescribeRegions`, `ListApplications`), and STS `AssumeRole` calls — with spikes during failure simulations as instances terminate, re-register, and the route healer Lambda fires.
 
 ## NAT Instance Bootstrap
 
@@ -102,7 +113,7 @@ HTTP workload — ALB is the correct choice. Layer 7 routing, TLS termination, p
 
 ## Resilience Testing
 
-A full battery of failure injection tests was run against the live stack to validate recovery behavior. All tests terminated instances via the AWS CLI and measured time to full SSM connectivity restoration.
+A full battery of failure injection tests was run against the live stack to validate recovery behavior. All tests terminated instances via the AWS CLI and measured time to full SSM connectivity restoration, with stale-ID filtering to ensure replacement instances (not cached terminated ones) were counted.
 
 **Baseline:** `terraform destroy` → `terraform apply` → all 4 instances online in **105 seconds** (28s after apply completed).
 
@@ -110,21 +121,27 @@ A full battery of failure injection tests was run against the live stack to vali
 
 | Scenario | Recovery Time | Notes |
 |---|---|---|
-| Both private instances terminated | 111s | NAT untouched; routes stayed active throughout |
-| NAT AZ-1 + Private AZ-1 (same AZ) | 125s | Healer restored route before replacement private instance needed egress |
+| Single private only | 55s | Fastest result — no NAT involvement, replacement just needs SSM agent to register |
+| Single NAT only | 76s | Other AZ fully healthy; healer repoints route, one bootstrap to wait on |
+| Both NATs only | 86s | Both healers fired independently; existing SSM sessions survived full blackhole |
+| Both privates only | 111s | NAT untouched; routes stayed active throughout |
+| NAT + same-AZ private (one NAT) | 131s | Private-a replacement blocked until its AZ-a NAT finished bootstrapping |
+| NAT AZ-1 + Private AZ-1 (same AZ, both NATs) | 125s | Healer restored route before replacement private needed egress |
 | NAT AZ-1 + Private AZ-2 (cross AZ) | 147s | AZ-2 private recovered independently through its healthy NAT |
-| Both NATs terminated | 86s (routes); privates never dropped | Both healers fired independently; existing SSM sessions survived full blackhole |
-| Both NATs + Private AZ-1 | 158s | Worst case; surviving Private AZ-2 held SSM session for 123s with both routes dark |
+| Both NATs + one private | 120–158s | Tested both AZ combinations; range reflects NAT bootstrap variance |
+| All 4 terminated | 152s | Complete blackout T+43s–T+108s (65s with zero instances online) |
 
 ### What the Tests Showed
 
-**Recovery ceiling is NAT bootstrap time, not the healer.** The Lambda fires within ~60–90s of termination and updates the route. But the NAT instance itself takes 3–5 minutes to complete user_data. Routes go `active` pointing at new ENIs before packets can actually flow. The effective outage window for existing connections is the route blackhole period (~60–90s). New connections wait for full NAT bootstrap.
+**Recovery ceiling is NAT bootstrap time, not the healer.** The Lambda fires within ~60–90s of termination and updates the route. But the NAT instance itself takes longer to complete user_data (apt install, iptables, source/dest check). Routes go `active` pointing at new ENIs before packets can actually flow. The effective outage window for existing connections is the route blackhole period. New connections wait for full NAT bootstrap.
+
+**Single-instance failures are fast.** A single private instance recovers in ~55s — just ASG detection plus SSM agent registration, no NAT dependency. A single NAT recovers in ~76s — one bootstrap, other AZ untouched. These are the most common real-world failure modes and the most recoverable.
 
 **Existing SSM sessions are remarkably durable.** In every test where a private instance survived but lost its NAT, the SSM TCP session held through the entire blackhole window — up to 123 seconds with no egress. The healer restored routes fast enough that sessions didn't need to reconnect.
 
-**AZ isolation held in every scenario.** AZ-2 failures never impacted AZ-1 recovery and vice versa. The two ASGs and two healer invocations operated independently. The asymmetric timing between AZ-1 and AZ-2 healer firings (up to ~32s apart) is normal — EventBridge delivers events independently and NAT instances launch independently.
+**AZ isolation held in every scenario.** AZ-2 failures never impacted AZ-1 recovery and vice versa across all nine test combinations. The two ASGs and two healer invocations operated independently throughout.
 
-**Recovery band is consistent.** Across all failure combinations — 1 instance, 2 instances, 3 instances, same AZ, cross AZ — recovery stayed in the **90–160 second range**. The variance is dominated by which NAT instance boots faster, not the number of failures.
+**Recovery band is consistent.** Across all failure combinations — 1 instance through all 4 — recovery stayed in the **55–158 second range**, with the floor set by single-instance ASG replacement and the ceiling by NAT bootstrap time in the worst-case all-4 scenario.
 
 ## What NAT Gateway Would Delete
 
@@ -176,10 +193,11 @@ The network and compute layers are complete and validated. The NAT route healer 
 | NAT instances (Debian, ASG-managed, per AZ) | Done |
 | Private compute (Ubuntu, ASG-managed, per AZ) | Done |
 | NAT route self-healer (EventBridge + Lambda) | Done |
-| Resilience testing | Done |
+| Resilience testing (all failure combinations) | Done |
+| Audit logging (CloudTrail → CloudWatch Logs) | Done |
 | App tier (private ASG + ALB) | Planned |
 | Database layer (RDS Multi-AZ) | Planned |
-| Monitoring (CloudWatch alarms + VPC Flow Logs) | Planned |
+| CloudWatch alarms + VPC Flow Logs | Planned |
 
 ## Known Limitations
 
