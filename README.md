@@ -18,6 +18,7 @@ VPC (10.0.0.0/16)
 |---|---|
 | Infrastructure | Terraform (modular) |
 | NAT | Debian t2.micro instances, one per AZ, ASG-managed |
+| Private Compute | Ubuntu t2.micro instances, one per AZ, ASG-managed |
 | Load Balancing | ALB (planned) |
 | Database | RDS Multi-AZ (planned) |
 | Access | AWS SSM Session Manager |
@@ -55,13 +56,23 @@ terraform apply
 terraform destroy
 ```
 
-## Status
+## Current Progress (as of 2026-04-30)
 
-- [x] Network layer (VPC, subnets, route tables)
-- [x] Compute layer (NAT instances via ASG, SSM access)
-- [ ] App layer (EC2 ASG, ALB)
-- [ ] Database layer (RDS Multi-AZ)
-- [ ] Monitoring (CloudWatch)
+- [x] Network layer: VPC, public/private subnets, and route tables across 2 AZs
+- [x] NAT layer: Debian NAT instances in per-AZ ASGs
+- [x] Private compute baseline: Ubuntu private instances in per-AZ ASGs
+- [x] Private subnet internet egress routed through NAT instance ENIs per AZ
+- [x] Access and validation: NAT working as intended, private instances reach online SSM connectivity within ~2 minutes
+- [ ] App layer: private app ASG plus ALB listeners/target groups
+- [ ] Database layer: RDS Multi-AZ module and wiring
+- [ ] Monitoring: CloudWatch alarms/log groups and optional VPC Flow Logs
+
+## Work In Progress
+
+- Build app tier in private subnets and front it with an ALB in public subnets
+- Add security group boundaries for ALB -> App and App -> RDS traffic
+- Add `modules/database` for Multi-AZ RDS and subnet/security integration
+- Add `modules/monitoring` for alarms, logs, and network observability
 
 ## Known TODOs
 
