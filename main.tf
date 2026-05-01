@@ -16,11 +16,15 @@ module "network" {
 module "compute" {
   source = "./modules/compute"
 
-  project_name         = var.project_name
-  vpc_id               = module.network.vpc_id
-  azs                  = local.azs
-  public_subnet_ids    = module.network.public_subnet_ids
-  ami_id               = data.aws_ami.debian.id
-  instance_type        = "t2.micro"
-  iam_instance_profile = "SSM-EC2"
+  project_name            = var.project_name
+  vpc_id                  = module.network.vpc_id
+  azs                     = local.azs
+  public_subnet_ids       = module.network.public_subnet_ids
+  private_subnet_ids      = module.network.private_subnet_ids
+  private_route_table_ids = module.network.private_route_table_ids
+  nat_ami_id              = data.aws_ami.debian.id
+  nat_instance_type       = "t2.micro"
+  private_ami_id          = data.aws_ami.ubuntu.id
+  private_instance_type   = "t2.micro"
+  iam_instance_profile    = "SSM-EC2"
 }

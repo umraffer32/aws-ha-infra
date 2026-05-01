@@ -6,7 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A multi-AZ AWS infrastructure for a highly available web application, deployed with Terraform. The stack prioritizes **cost efficiency within the AWS Free Tier** while maintaining HA across 2 availability zones.
 
-**Current Status:** Network layer and compute/NAT layer are implemented. Database (RDS) and monitoring layers are planned for future phases.
+**Current Status:** Network layer and compute layer are implemented, including NAT instances and private Ubuntu instances in per-AZ Auto Scaling Groups with SSM connectivity. Database (RDS) and monitoring layers are planned for future phases.
+
+## Progress Update (2026-04-30)
+
+- Added private compute capacity: two Ubuntu `t2.micro` instances (1 per AZ) via `aws_autoscaling_group.private` in `modules/compute/`.
+- Added private route egress through NAT by creating per-AZ default routes in private route tables to each NAT instance ENI.
+- Root module wiring now passes `private_subnet_ids`, `private_route_table_ids`, Debian AMI for NAT, and Ubuntu AMI for private instances into `module.compute`.
+- Added `modules/compute/outputs.tf` and exported private/NAT ASG names and private security group in root `outputs.tf`.
+- Updated `ssm-connect.sh` to list `Private-*` instances.
+- Performed full environment recycle: `terraform destroy -auto-approve` then `terraform apply -auto-approve`.
+- Verified private instance management channel via SSM by running commands on both private instances with `AWS-RunShellScript` and confirming successful output.
+- **Repository state note:** These changes are present locally but **have not been committed or pushed**.
 
 See README.md for detailed architectural decisions and trade-offs.
 
@@ -31,8 +42,9 @@ See README.md for detailed architectural decisions and trade-offs.
 │   └── outputs.tf               # VPC, subnet, route table exports
 │
 └── modules/compute/
-    ├── main.tf                  # NAT SG, launch template, per-AZ ASGs
-    └── variables.tf             # Compute module inputs
+    ├── main.tf                  # NAT + private SGs, launch templates, per-AZ ASGs, private default routes via NAT
+    ├── variables.tf             # Compute module inputs
+    └── outputs.tf               # Compute exports (ASG names, private SG)
 ```
 
 ## Prerequisites
@@ -105,12 +117,16 @@ VPC (10.0.0.0/16)
 - Route tables for public (→ IGW) and private (→ NAT) subnets
 - Tagging with `Project`, `ManagedBy`, `Environment`
 
-The compute module (`modules/compute/`) deploys NAT instances via Auto Scaling Groups:
+The compute module (`modules/compute/`) deploys both NAT and private instances:
 
 - **Security group** (`aws_security_group.nat`): allows all inbound from VPC CIDR, all outbound
+- **Security group** (`aws_security_group.private`): egress-only for private instances
 - **Launch template** (`aws_launch_template.nat`): Debian 13 AMI, t2.micro, SSM profile (`SSM-EC2`), IMDSv2 enforced, user_data bootstraps NAT behavior
+- **Launch template** (`aws_launch_template.private`): Ubuntu 24.04 AMI, t2.micro, SSM profile (`SSM-EC2`), IMDSv2 enforced
   - **Gotcha:** profile name is `SSM-EC2` (hyphen) — `SSM_EC2` (underscore) does not exist in this account
 - **ASGs** (`aws_autoscaling_group.nat`): one per AZ (count = 2), min=max=desired=1, deployed in public subnets
+- **ASGs** (`aws_autoscaling_group.private`): one per AZ (count = 2), min=max=desired=1, deployed in private subnets
+- **Private routes** (`aws_route.private_default_via_nat`): one per AZ default route (`0.0.0.0/0`) to NAT instance ENI for private egress
 
 **user_data bootstrap sequence:**
 1. Installs `amazon-ssm-agent` via `.deb` download (no apt repo needed)
@@ -168,6 +184,7 @@ The compute module (`modules/compute/`) deploys NAT instances via Auto Scaling G
 ### Phase 1: Compute (Implemented)
 
 - NAT instances via ASG (one per AZ) in public subnets — `modules/compute/`
+- Private Ubuntu instances via ASG (one per AZ) in private subnets — `modules/compute/`
 - Bootstrapped via user_data (IPv4 forwarding, iptables, SSM agent)
 - IMDSv2 enforced, SSM instance profile for agent + self-modify SRC/DST check
 
@@ -175,7 +192,7 @@ The compute module (`modules/compute/`) deploys NAT instances via Auto Scaling G
 - App EC2 ASG in private subnets
 - ALB in public subnets targeting the app ASG
 - App security groups (ALB → App, App → RDS)
-- `outputs.tf` for compute module (ASG ARNs, SG IDs)
+- App-specific outputs and wiring once ALB/target groups are introduced
 
 ### Phase 2: Database (Planned)
 
@@ -201,6 +218,7 @@ The compute module (`modules/compute/`) deploys NAT instances via Auto Scaling G
    - Current workaround: user_data calls `aws ec2 modify-instance-attribute --no-source-dest-check` via IMDSv2
    - Requires: SSM-EC2 instance profile to have `ec2:ModifyInstanceAttribute` on `arn:aws:ec2:*:*:instance/*`
    - `modules/compute/main.tf` has the field commented out with an explanatory note
+   - Observed during recreate testing: NAT instances may come up with `SourceDestCheck=True` initially; verify and remediate during post-apply checks if needed
 
 3. **terraform.tfstate** in git (state management follow-up)
    - Current: Committed to git for demo/personal project simplicity
@@ -250,6 +268,12 @@ aws ec2 describe-subnets --filters "Name=vpc-id,Values=<VPC_ID>" --profile mrpoc
 
 # Check route tables
 aws ec2 describe-route-tables --filters "Name=vpc-id,Values=<VPC_ID>" --profile mrpocket2726
+
+# List NAT + private instances and SSM session commands
+./ssm-connect.sh
+
+# Verify SSM-managed instances are online
+aws ssm describe-instance-information --profile mrpocket2726 --region us-west-2 --output table
 ```
 
 Or view in the AWS Console: VPC dashboard → Your VPCs → Filter by tag `Project=ha`.
@@ -275,3 +299,7 @@ This is safe because state is tracked in git. You can reapply anytime.
 - [terraform-aws-modules/vpc](https://registry.terraform.io/modules/terraform-aws-modules/vpc/aws/~5.0)
 - [AWS Well-Architected Framework — Reliability Pillar](https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/welcome.html)
 - [NAT Instance vs. NAT Gateway](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-comparison.html)
+
+## Current Status
+
+As of 2026-04-30, the current version of this project produces successful results. NAT is working as intended, and private instances have online SSM connectivity within 2 minutes.
