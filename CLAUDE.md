@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A multi-AZ AWS infrastructure for a highly available web application, deployed with Terraform. The stack prioritizes **cost efficiency within the AWS Free Tier** while maintaining HA across 2 availability zones.
 
-**Current Status:** Network layer and compute layer are implemented, including NAT instances and private Ubuntu instances in per-AZ Auto Scaling Groups with SSM connectivity. Database (RDS) and monitoring layers are planned for future phases.
+**Current Status:** Network and compute layers are implemented, including NAT instances and private Ubuntu instances in per-AZ Auto Scaling Groups with SSM connectivity. NAT route self-healing is implemented using EventBridge + Lambda to repoint private default routes to replacement NAT ENIs after NAT ASG relaunch events. Database (RDS) and monitoring layers are planned for future phases.
 
-## Progress Update (2026-04-30)
+## Progress Update (2026-05-01)
 
 - Added private compute capacity: two Ubuntu `t2.micro` instances (1 per AZ) via `aws_autoscaling_group.private` in `modules/compute/`.
 - Added private route egress through NAT by creating per-AZ default routes in private route tables to each NAT instance ENI.
@@ -17,7 +17,10 @@ A multi-AZ AWS infrastructure for a highly available web application, deployed w
 - Updated `ssm-connect.sh` to list `Private-*` instances.
 - Performed full environment recycle: `terraform destroy -auto-approve` then `terraform apply -auto-approve`.
 - Verified private instance management channel via SSM by running commands on both private instances with `AWS-RunShellScript` and confirming successful output.
-- **Repository state note (2026-05-01):** These changes are now committed and pushed to `main`; working tree is clean.
+- Added `modules/nat_route_healer/` to automatically repair private default routes after NAT instance replacement:
+  - EventBridge rule listens for `EC2 Instance Launch Successful` from the NAT ASGs.
+  - Lambda resolves the launched NAT instance ENI and runs `ec2:ReplaceRoute` for the mapped private route table.
+- **Repository state note (2026-05-01):** Baseline network/compute changes are committed and pushed to `main`.
 
 See README.md for detailed architectural decisions and trade-offs.
 
@@ -41,10 +44,15 @@ See README.md for detailed architectural decisions and trade-offs.
 │   ├── variables.tf             # Network module inputs
 │   └── outputs.tf               # VPC, subnet, route table exports
 │
-└── modules/compute/
-    ├── main.tf                  # NAT + private SGs, launch templates, per-AZ ASGs, private default routes via NAT
-    ├── variables.tf             # Compute module inputs
-    └── outputs.tf               # Compute exports (ASG names, private SG)
+├── modules/compute/
+│   ├── main.tf                  # NAT + private SGs, launch templates, per-AZ ASGs, private default routes via NAT
+│   ├── variables.tf             # Compute module inputs
+│   └── outputs.tf               # Compute exports (ASG names, private SG)
+│
+└── modules/nat_route_healer/
+    ├── main.tf                  # EventBridge + Lambda + IAM for automatic private-route repointing on NAT relaunch
+    ├── variables.tf             # Route-healer module inputs (ASG->route-table map)
+    └── outputs.tf               # Route-healer module outputs (lambda/rule names)
 ```
 
 ## Prerequisites
@@ -127,6 +135,12 @@ The compute module (`modules/compute/`) deploys both NAT and private instances:
 - **ASGs** (`aws_autoscaling_group.nat`): one per AZ (count = 2), min=max=desired=1, deployed in public subnets
 - **ASGs** (`aws_autoscaling_group.private`): one per AZ (count = 2), min=max=desired=1, deployed in private subnets
 - **Private routes** (`aws_route.private_default_via_nat`): one per AZ default route (`0.0.0.0/0`) to NAT instance ENI for private egress
+
+The NAT route-healer module (`modules/nat_route_healer/`) mitigates route drift when NAT instances are replaced:
+
+- **Event source**: Auto Scaling service event `EC2 Instance Launch Successful` filtered to NAT ASG names
+- **Lambda action**: maps ASG name -> private route table ID, resolves launched NAT instance ENI, and calls `ec2:ReplaceRoute` for `0.0.0.0/0`
+- **Outcome**: private subnets regain egress without requiring manual `terraform apply` after NAT replacement events
 
 **user_data bootstrap sequence:**
 1. Installs `amazon-ssm-agent` via `.deb` download (no apt repo needed)
@@ -228,6 +242,10 @@ The compute module (`modules/compute/`) deploys both NAT and private instances:
    - Optional, but valuable for debugging network connectivity issues
    - Logs to CloudWatch Logs (cost: ~$0.50/GB in us-west-2)
 
+5. **NAT route-healer observability** (reliability follow-up)
+   - EventBridge delivery is best effort; keep a fallback runbook (`terraform apply`) if route updates lag or fail
+   - Consider adding CloudWatch alarms/log metric filters for Lambda errors and DLQ integration
+
 ## Adding New Infrastructure
 
 When adding compute, database, or monitoring layers:
@@ -300,6 +318,49 @@ This is safe because state is tracked in git. You can reapply anytime.
 - [AWS Well-Architected Framework — Reliability Pillar](https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/welcome.html)
 - [NAT Instance vs. NAT Gateway](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-comparison.html)
 
+## Resilience Testing (2026-04-30)
+
+A full battery of failure injection tests was run against the live stack to validate ASG self-healing and the NAT route healer under various failure combinations. All tests measured time from instance termination to full SSM connectivity restoration.
+
+**Baseline:** `terraform destroy` → `terraform apply` → all 4 instances online in **105s** (28s after apply completed).
+
+### Test Results
+
+| Scenario | Recovery Time | Notes |
+|---|---|---|
+| Both private instances terminated | T+111s | NAT untouched; routes stayed active throughout |
+| NAT AZ-1 + Private AZ-1 (same AZ) | T+125s | Healer restored AZ-1 route before replacement private needed egress |
+| NAT AZ-1 + Private AZ-2 (cross AZ) | T+147s | AZ-2 private recovered independently through healthy AZ-2 NAT |
+| Both NATs terminated | T+86s (routes); privates never dropped | Existing SSM sessions survived the full blackhole window |
+| Both NATs + Private AZ-1 | T+158s | Worst case; surviving Private AZ-2 held SSM session for 123s with no egress |
+
+### Key Observations
+
+**Recovery is gated on NAT bootstrap time, not the healer.** The Lambda fires and updates the route within ~60–90s of termination — well before NAT user_data completes (apt install, iptables, source_dest_check). Routes go `active` pointing at new ENIs, but traffic doesn't flow until the NAT instance finishes bootstrapping. The healer eliminates the need for manual `terraform apply`; it doesn't shorten the actual traffic blackout.
+
+**Existing SSM sessions are remarkably resilient.** In every test where a private instance survived but lost its NAT, the SSM session held through the entire blackhole window — up to 123 seconds without egress. SSM's persistent TCP connection doesn't require continuous NAT availability once established.
+
+**AZ isolation held in every scenario.** AZ-2 failures never impacted AZ-1 recovery and vice versa. The two ASGs and two healers operated independently throughout.
+
+**Consistent recovery band of 90–160 seconds** across all failure combinations. The ceiling is NAT instance bootstrap time (dominated by `apt install` in user_data), not healer latency or ASG detection time.
+
+### NAT Instance vs. NAT Gateway: Honest Assessment
+
+This project demonstrates that NAT instances are a **viable but expensive engineering choice** in the operational sense. What the `modules/nat_route_healer/` module represents:
+
+- A Lambda with retry logic for ENI resolution
+- IAM role + scoped policy
+- EventBridge rule with ASG name filtering
+- A zip packaging pipeline in Terraform (`hashicorp/archive` provider)
+- A `source_dest_check` workaround via self-modifying user_data
+- Route data sources to resolve live ENI IDs at apply time
+
+All of that exists solely to approximate what NAT Gateway provides natively for $0.045/hr. If NAT Gateway were used, `modules/nat_route_healer/` would be deleted entirely, the NAT launch template and its bash-heavy user_data would go away, the `archive` provider dependency would vanish, and `modules/compute/` would shrink to private instances only — roughly 150–200 lines of Terraform and bash eliminated.
+
+**The crossover point:** For a portfolio or demo project on free tier, NAT instances are the right call — the engineering investment here is the point, and the cost savings are real. For production traffic with SLA obligations, NAT Gateway is correct. At 2am when a NAT instance dies and the question is "did the healer fire?", the $65/month to not ask that question is trivially justified.
+
 ## Current Status
 
-As of 2026-04-30, the current version of this project produces successful results. NAT is working as intended, and private instances have online SSM connectivity within 2 minutes.
+As of 2026-04-30, this project is considered complete at the network and compute layers. The NAT route healer has been implemented and validated under all meaningful failure combinations. The stack self-heals within 90–160 seconds across every tested scenario with no manual intervention required.
+
+Future phases (ALB, RDS, monitoring) are documented but not planned — the primary goal of demonstrating the complexity and trade-offs of NAT instance-based HA has been achieved.
