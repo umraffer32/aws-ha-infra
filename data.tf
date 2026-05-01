@@ -1,6 +1,6 @@
 data "aws_ami" "debian" {
   most_recent = true
-  owners      = ["136693071363"]  # Debian's official AWS account
+  owners      = ["136693071363"] # Debian's official AWS account
 
   filter {
     name   = "name"
@@ -20,7 +20,7 @@ data "aws_ami" "debian" {
 
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"]  # Canonical's official AWS account
+  owners      = ["099720109477"] # Canonical's official AWS account
 
   filter {
     name   = "name"

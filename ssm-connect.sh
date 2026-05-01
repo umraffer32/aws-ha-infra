@@ -35,6 +35,10 @@ echo "=== NAT Instances ==="
 echo ""
 print_instances "NAT" "NAT-*"
 
-echo "=== App Instances ==="
+echo "=== Private Instances ==="
+echo ""
+print_instances "Private" "Private-*"
+
+echo "=== App Instances (legacy tag) ==="
 echo ""
 print_instances "App" "App-*"
