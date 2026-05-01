@@ -28,6 +28,11 @@ module "compute" {
   iam_instance_profile    = "SSM-EC2"
 }
 
+module "monitoring" {
+  source       = "./modules/monitoring"
+  project_name = var.project_name
+}
+
 module "nat_route_healer" {
   source = "./modules/nat_route_healer"
 
