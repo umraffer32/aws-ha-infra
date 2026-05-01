@@ -43,6 +43,21 @@ output "cloudtrail_trail_arn" {
   value       = module.monitoring.cloudtrail_trail_arn
 }
 
+output "operations_dashboard_name" {
+  description = "Name of the CloudWatch operations dashboard"
+  value       = module.monitoring.operations_dashboard_name
+}
+
+output "monitoring_alarm_arns" {
+  description = "Map of CloudWatch alarm ARNs for monitoring"
+  value       = module.monitoring.alarm_arns
+}
+
+output "monitoring_alarm_names" {
+  description = "Map of CloudWatch alarm names for monitoring"
+  value       = module.monitoring.alarm_names
+}
+
 output "nat_route_healer_lambda_name" {
   description = "Lambda function that auto-heals private default routes after NAT replacement"
   value       = module.nat_route_healer.lambda_name
