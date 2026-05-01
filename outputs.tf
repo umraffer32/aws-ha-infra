@@ -32,3 +32,13 @@ output "private_security_group_id" {
   description = "Security group ID used by private instances"
   value       = module.compute.private_security_group_id
 }
+
+output "nat_route_healer_lambda_name" {
+  description = "Lambda function that auto-heals private default routes after NAT replacement"
+  value       = module.nat_route_healer.lambda_name
+}
+
+output "nat_route_healer_event_rule_name" {
+  description = "EventBridge rule name that triggers NAT route healing"
+  value       = module.nat_route_healer.event_rule_name
+}
