@@ -33,6 +33,16 @@ output "private_security_group_id" {
   value       = module.compute.private_security_group_id
 }
 
+output "cloudtrail_log_group_name" {
+  description = "CloudWatch log group receiving CloudTrail events"
+  value       = module.monitoring.cloudtrail_log_group_name
+}
+
+output "cloudtrail_trail_arn" {
+  description = "ARN of the CloudTrail trail"
+  value       = module.monitoring.cloudtrail_trail_arn
+}
+
 output "nat_route_healer_lambda_name" {
   description = "Lambda function that auto-heals private default routes after NAT replacement"
   value       = module.nat_route_healer.lambda_name
