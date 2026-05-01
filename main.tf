@@ -29,8 +29,11 @@ module "compute" {
 }
 
 module "monitoring" {
-  source       = "./modules/monitoring"
-  project_name = var.project_name
+  source = "./modules/monitoring"
+
+  project_name                     = var.project_name
+  nat_route_healer_lambda_name     = module.nat_route_healer.lambda_name
+  nat_route_healer_event_rule_name = module.nat_route_healer.event_rule_name
 }
 
 module "nat_route_healer" {
