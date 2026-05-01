@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A multi-AZ AWS infrastructure for a highly available web application, deployed with Terraform. The stack prioritizes **cost efficiency within the AWS Free Tier** while maintaining HA across 2 availability zones.
 
-**Current Status:** Network, compute, and audit logging layers are implemented. NAT instances and private Ubuntu instances run in per-AZ ASGs with SSM connectivity. NAT route self-healing uses EventBridge + Lambda. CloudTrail audit logging streams to CloudWatch Logs. Full resilience testing complete across all 9 failure combinations (55–158s recovery band). Database (RDS) and CloudWatch alarms are planned for future phases.
+**Current Status:** Network, compute, and audit logging layers are implemented. NAT instances and private Ubuntu instances run in per-AZ ASGs with SSM connectivity. NAT route self-healing uses EventBridge + Lambda. CloudTrail audit logging streams to CloudWatch Logs. Full resilience testing completed across all 9 failure combinations, with a validated 55–158s recovery band and a 105s destroy/reapply baseline. Database (RDS) and CloudWatch alarms are planned for future phases.
 
 ## Progress Update (2026-05-01)
 
@@ -39,7 +39,7 @@ A multi-AZ AWS infrastructure for a highly available web application, deployed w
   - IAM role allowing CloudTrail to write to the log group
   - Single-region trail, global service events enabled, log file validation enabled
 - Wired `module.monitoring` into root `main.tf` and exported `cloudtrail_log_group_name` and `cloudtrail_trail_arn` in root `outputs.tf`
-- Ran complete resilience test suite — all 9 failure combinations tested, 55–158s recovery band confirmed
+- Ran complete resilience test suite — all 9 failure combinations tested, 55–158s recovery band confirmed, 105s destroy/reapply baseline observed
 - New scenarios added this session: single NAT only (76s), single private only (55s), NAT + same-AZ private without second NAT (131s), all 4 terminated (152s)
 
 See README.md for detailed architectural decisions and trade-offs.
@@ -359,33 +359,33 @@ This is safe because state is tracked in git. You can reapply anytime.
 
 All tests terminated instances via `aws ec2 terminate-instances` and polled SSM with stale-ID filtering to confirm genuine replacements (not cached terminated IDs) came online.
 
-**Baseline:** `terraform destroy` → `terraform apply` → all 4 instances online in **105s**.
+**Baseline:** `terraform destroy` → `terraform apply` → all 4 instances online in **105s**. The final 4 SSM-managed instances were visible **28s after `terraform apply` completed**.
 
 ### Complete Test Matrix
 
 | Scenario | Recovery Time | Notes |
 |---|---|---|
-| Single private only | 55s | No NAT involvement; replacement just needs SSM agent registration |
-| Single NAT only | 76s | Other AZ untouched; healer repoints route, one bootstrap to wait on |
-| Both NATs only | 86s | Both healers fired independently; existing SSM sessions survived blackhole |
-| Both privates only | 111s | NAT routes untouched throughout |
-| NAT + same-AZ private (single NAT) | 131s | Private replacement blocked until its AZ NAT finished bootstrapping |
-| NAT AZ-1 + Private AZ-1 (both NATs up) | 125s | Healer restored route before replacement private needed egress |
-| NAT AZ-1 + Private AZ-2 (cross AZ) | 147s | AZ-2 private recovered independently through healthy AZ-2 NAT |
+| Single private only | 55s | No NAT involvement; replacement only needed SSM agent registration |
+| Single NAT only | 76s | Other AZ stayed healthy; healer repointed the private route, then one NAT bootstrap had to finish |
+| Both NATs only | 86s | Both healers fired independently; existing SSM sessions survived the full blackhole window |
+| Both privates only | 111s | NAT untouched; private routes stayed active throughout |
+| NAT + same-AZ private (single NAT) | 131s | Private replacement was blocked until its AZ NAT finished bootstrapping |
+| NAT AZ-1 + Private AZ-1 (both NATs up) | 125s | Healer restored the route before the replacement private instance needed egress |
+| NAT AZ-1 + Private AZ-2 (cross AZ) | 147s | AZ-2 private recovered independently through its healthy NAT |
 | Both NATs + one private | 120–158s | Tested both AZ combinations; range reflects NAT bootstrap variance |
-| All 4 terminated | 152s | Full blackout 65s (T+43s–T+108s); no instances online during that window |
+| All 4 terminated | 152s | Complete blackout from T+43s to T+108s, for 65s with zero instances online |
 
 ### Key Observations
 
-**Recovery is gated on NAT bootstrap time.** The healer fires and updates the route within ~60–90s — well before NAT user_data completes. Routes go `active` pointing at valid ENIs before packets can flow. The healer eliminates manual `terraform apply`; it doesn't shorten the traffic blackout.
+**Recovery is gated on NAT bootstrap time.** The healer fires and updates the route within roughly 60–90s, but NAT user_data still has to finish. Routes can be `active` before packets can flow. The healer eliminates manual `terraform apply`; it does not shorten the traffic blackout.
 
-**Single-instance failures are fast.** Single private: 55s (no NAT dependency). Single NAT: 76s (one bootstrap, other AZ untouched). These are the most common real-world failure modes.
+**Single-instance failures are fast.** Single private recovered in 55s and single NAT in 76s. These are the most common real-world failure modes.
 
-**SSM sessions are durable under NAT loss.** In every test where a private instance survived but lost its NAT, the SSM TCP session held through the full blackhole window — up to 123s with no egress.
+**SSM sessions were durable under NAT loss.** In every test where a private instance survived but lost its NAT, the SSM TCP session held through the full blackhole window, up to 123s with no egress.
 
 **AZ isolation held across all 9 combinations.** AZ-2 failures never impacted AZ-1 recovery. The two ASGs and two healer invocations operated independently throughout.
 
-**Recovery band: 55–158 seconds.** Floor is single-instance ASG replacement + SSM registration. Ceiling is NAT bootstrap time under worst-case all-4 termination.
+**Recovery band: 55–158 seconds.** The floor is single-instance ASG replacement plus SSM registration. The ceiling is NAT bootstrap time under worst-case all-4 termination.
 
 ## Current Status
 

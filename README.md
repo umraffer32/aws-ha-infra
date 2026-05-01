@@ -113,35 +113,35 @@ HTTP workload — ALB is the correct choice. Layer 7 routing, TLS termination, p
 
 ## Resilience Testing
 
-A full battery of failure injection tests was run against the live stack to validate recovery behavior. All tests terminated instances via the AWS CLI and measured time to full SSM connectivity restoration, with stale-ID filtering to ensure replacement instances (not cached terminated ones) were counted.
+A full battery of failure injection tests was run against the live stack to validate recovery behavior. All tests terminated instances via the AWS CLI and measured time to full SSM connectivity restoration, with stale-ID filtering to ensure replacement instances, not cached terminated ones, were counted.
 
-**Baseline:** `terraform destroy` → `terraform apply` → all 4 instances online in **105 seconds** (28s after apply completed).
+**Baseline:** `terraform destroy` → `terraform apply` → all 4 instances online in **105 seconds**. The final 4 SSM-managed instances were visible **28 seconds after `terraform apply` completed**.
 
 ### Test Results
 
 | Scenario | Recovery Time | Notes |
 |---|---|---|
-| Single private only | 55s | Fastest result — no NAT involvement, replacement just needs SSM agent to register |
-| Single NAT only | 76s | Other AZ fully healthy; healer repoints route, one bootstrap to wait on |
-| Both NATs only | 86s | Both healers fired independently; existing SSM sessions survived full blackhole |
-| Both privates only | 111s | NAT untouched; routes stayed active throughout |
-| NAT + same-AZ private (one NAT) | 131s | Private-a replacement blocked until its AZ-a NAT finished bootstrapping |
-| NAT AZ-1 + Private AZ-1 (same AZ, both NATs) | 125s | Healer restored route before replacement private needed egress |
+| Single private only | 55s | Fastest result; no NAT involvement, replacement only needed SSM agent registration |
+| Single NAT only | 76s | Other AZ stayed healthy; healer repointed the private route, then one NAT bootstrap had to finish |
+| Both NATs only | 86s | Both healers fired independently; existing SSM sessions survived the full blackhole window |
+| Both privates only | 111s | NAT untouched; private routes stayed active throughout |
+| NAT + same-AZ private (one NAT) | 131s | Private replacement was blocked until its AZ NAT finished bootstrapping |
+| NAT AZ-1 + Private AZ-1 (same AZ, both NATs) | 125s | Healer restored the route before the replacement private instance needed egress |
 | NAT AZ-1 + Private AZ-2 (cross AZ) | 147s | AZ-2 private recovered independently through its healthy NAT |
 | Both NATs + one private | 120–158s | Tested both AZ combinations; range reflects NAT bootstrap variance |
-| All 4 terminated | 152s | Complete blackout T+43s–T+108s (65s with zero instances online) |
+| All 4 terminated | 152s | Complete blackout from T+43s to T+108s, for 65s with zero instances online |
 
 ### What the Tests Showed
 
-**Recovery ceiling is NAT bootstrap time, not the healer.** The Lambda fires within ~60–90s of termination and updates the route. But the NAT instance itself takes longer to complete user_data (apt install, iptables, source/dest check). Routes go `active` pointing at new ENIs before packets can actually flow. The effective outage window for existing connections is the route blackhole period. New connections wait for full NAT bootstrap.
+**Recovery is bounded by NAT bootstrap time, not the healer.** The Lambda fires within roughly 60–90s of termination and updates the route, but the NAT instance still needs to finish user_data (`apt`, iptables, source/dest check). Routes can be `active` before packets actually flow.
 
-**Single-instance failures are fast.** A single private instance recovers in ~55s — just ASG detection plus SSM agent registration, no NAT dependency. A single NAT recovers in ~76s — one bootstrap, other AZ untouched. These are the most common real-world failure modes and the most recoverable.
+**Single-instance failures are fast.** Single private recovered in 55s and single NAT in 76s. Those are the most common failure modes, and both were fully self-healing.
 
-**Existing SSM sessions are remarkably durable.** In every test where a private instance survived but lost its NAT, the SSM TCP session held through the entire blackhole window — up to 123 seconds with no egress. The healer restored routes fast enough that sessions didn't need to reconnect.
+**SSM sessions were durable under NAT loss.** In every test where a private instance survived but lost its NAT, the SSM TCP session held through the entire blackhole window, up to 123s with no egress.
 
-**AZ isolation held in every scenario.** AZ-2 failures never impacted AZ-1 recovery and vice versa across all nine test combinations. The two ASGs and two healer invocations operated independently throughout.
+**AZ isolation held across all 9 combinations.** AZ-2 failures never impacted AZ-1 recovery and vice versa. The two ASGs and two healer invocations stayed independent throughout.
 
-**Recovery band is consistent.** Across all failure combinations — 1 instance through all 4 — recovery stayed in the **55–158 second range**, with the floor set by single-instance ASG replacement and the ceiling by NAT bootstrap time in the worst-case all-4 scenario.
+**The full recovery band was 55–158s.** The floor came from single-instance ASG replacement plus SSM registration. The ceiling came from NAT bootstrap time in the worst-case all-4 termination.
 
 ## What NAT Gateway Would Delete
 
