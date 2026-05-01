@@ -14,7 +14,7 @@ module "network" {
 }
 
 module "compute" {
-  source = "./modules/compute"
+  source                  = "./modules/compute"
   project_name            = var.project_name
   vpc_id                  = module.network.vpc_id
   azs                     = local.azs
@@ -26,4 +26,14 @@ module "compute" {
   private_ami_id          = data.aws_ami.ubuntu.id
   private_instance_type   = "t2.micro"
   iam_instance_profile    = "SSM-EC2"
+}
+
+module "nat_route_healer" {
+  source = "./modules/nat_route_healer"
+
+  project_name = var.project_name
+  nat_asg_to_private_route_table = {
+    for idx, asg_name in module.compute.nat_asg_names :
+    asg_name => module.network.private_route_table_ids[idx]
+  }
 }
