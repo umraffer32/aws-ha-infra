@@ -30,7 +30,7 @@ VPC (10.0.0.0/16)
 | Private Compute | Ubuntu 24.04 t2.micro instances, one per AZ, ASG-managed |
 | Route Self-Healing | EventBridge + Lambda (`modules/nat_route_healer/`) |
 | Instance Access | AWS SSM Session Manager (no SSH, no keypairs) |
-| Audit Logging | CloudTrail → CloudWatch Logs (`/aws/cloudtrail/main`) |
+| Monitoring | CloudTrail → CloudWatch Logs, CloudWatch alarms, operations dashboard |
 | Load Balancing | ALB (planned) |
 | Database | RDS Multi-AZ (planned) |
 
@@ -74,6 +74,14 @@ The standard remedy is `terraform apply`, which re-reads the live NAT instance E
 **Where it lands:** CloudWatch Logs log group `/aws/cloudtrail/main`, 1-day retention. A backing S3 bucket (`main-cloudtrail-<account-id>`) stores raw trail data with a matching 1-day lifecycle expiration.
 
 **Volume observed:** 920+ CloudTrail events and 102 Lambda healer events as of 2026-05-01, with CloudTrail ingesting at ~88 events/min under active load. Dominant event types: SSM `UpdateInstanceInformation` heartbeats, IAMUser console reads (`DescribeRegions`, `ListApplications`), and STS `AssumeRole` calls — with spikes during failure simulations as instances terminate, re-register, and the route healer Lambda fires.
+
+## Operations Monitoring
+
+`modules/monitoring/` also ships CloudWatch alarms and an operations dashboard for the failure modes that matter most to this design.
+
+**Alarms:** CloudTrail ingestion stalled, NAT route healer Lambda errors, NAT route healer Lambda throttles, EventBridge failed invocations, and EventBridge retry pressure. Alarm actions, OK actions, and insufficient-data actions are configurable through module variables and default to no actions.
+
+**Dashboard:** `${project_name}-operations` shows alarm status, CloudTrail event flow, NAT healer Lambda invocations/errors/throttles, and EventBridge delivery health for the NAT launch rule.
 
 ## NAT Instance Bootstrap
 
@@ -156,7 +164,8 @@ If this project used NAT Gateway instead of NAT instances, the following would b
 - `data.aws_ami.debian` — NAT instances run Debian; private instances are Ubuntu; with NAT Gateway only one AMI lookup remains
 - NAT-specific variables: `nat_ami_id`, `nat_instance_type`
 - Outputs: `nat_asg_names`, `nat_route_healer_lambda_name`, `nat_route_healer_event_rule_name`
-- CLAUDE.md known issues: `source_dest_check` workaround, healer observability concerns
+- NAT healer CloudWatch alarms and dashboard widgets
+- CLAUDE.md known issues: `source_dest_check` workaround, EventBridge fallback runbook
 
 Roughly **150–200 lines of Terraform and bash eliminated**, an entire module deleted, and the operational question "did the healer fire?" permanently removed from the runbook.
 
@@ -185,7 +194,7 @@ terraform destroy
 
 ## Project Status
 
-The network and compute layers are complete and validated. The NAT route healer has been tested under all meaningful failure combinations and performs as designed.
+The network, compute, NAT route-healer, audit logging, and operations monitoring layers are complete and validated. The NAT route healer has been tested under all meaningful failure combinations and performs as designed.
 
 | Component | Status |
 |---|---|
@@ -195,9 +204,10 @@ The network and compute layers are complete and validated. The NAT route healer 
 | NAT route self-healer (EventBridge + Lambda) | Done |
 | Resilience testing (all failure combinations) | Done |
 | Audit logging (CloudTrail → CloudWatch Logs) | Done |
+| Operations monitoring (dashboard + alarms) | Done |
 | App tier (private ASG + ALB) | Planned |
 | Database layer (RDS Multi-AZ) | Planned |
-| CloudWatch alarms + VPC Flow Logs | Planned |
+| VPC Flow Logs | Planned |
 
 ## Known Limitations
 
@@ -209,7 +219,7 @@ The network and compute layers are complete and validated. The NAT route healer 
 
 **Terraform state in git** — `terraform.tfstate` is committed for demo simplicity. Production should use an S3 backend with DynamoDB locking.
 
-**EventBridge delivery is best-effort** — If the healer Lambda fails or the event is not delivered, the route stays broken. Fallback is `terraform apply`. A DLQ and CloudWatch alarm on Lambda errors would close this gap.
+**EventBridge delivery is best-effort** — If the healer Lambda fails or the event is not delivered, the route stays broken. CloudWatch alarms now surface Lambda errors, throttles, EventBridge failed invocations, and retry pressure, but there is still no DLQ. Fallback is `terraform apply`.
 
 ## References
 

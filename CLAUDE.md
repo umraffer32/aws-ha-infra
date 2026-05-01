@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A multi-AZ AWS infrastructure for a highly available web application, deployed with Terraform. The stack prioritizes **cost efficiency within the AWS Free Tier** while maintaining HA across 2 availability zones.
 
-**Current Status:** Network, compute, and audit logging layers are implemented. NAT instances and private Ubuntu instances run in per-AZ ASGs with SSM connectivity. NAT route self-healing uses EventBridge + Lambda. CloudTrail audit logging streams to CloudWatch Logs. Full resilience testing completed across all 9 failure combinations, with a validated 55–158s recovery band and a 105s destroy/reapply baseline. Database (RDS) and CloudWatch alarms are planned for future phases.
+**Current Status:** Network, compute, NAT route self-healing, audit logging, and operations monitoring are implemented. NAT instances and private Ubuntu instances run in per-AZ ASGs with SSM connectivity. NAT route self-healing uses EventBridge + Lambda. CloudTrail audit logging streams to CloudWatch Logs. CloudWatch alarms and an operations dashboard cover CloudTrail ingestion, NAT healer Lambda health, and EventBridge delivery health. Full resilience testing completed across all 9 failure combinations, with a validated 55–158s recovery band and a 105s destroy/reapply baseline. App tier, database (RDS), VPC Flow Logs, and route-healer DLQ handling are planned for future phases.
 
 ## Progress Update (2026-05-01)
 
@@ -30,6 +30,15 @@ A multi-AZ AWS infrastructure for a highly available web application, deployed w
 - Measured CloudTrail ingestion rate: **~88 events/min** (active background log generation process running)
 - Lambda healer log was quiet this session — no NAT replacements triggered
 - Dominant CloudTrail event types observed: SSM `UpdateInstanceInformation` heartbeats, IAMUser console read calls (`DescribeRegions`, `ListApplications`, `ListZonalShifts`)
+
+## Progress Update (2026-05-01, session 4)
+
+- Added CloudWatch operations dashboard `${project_name}-operations` in `modules/monitoring/`.
+- Added CloudTrail log metric filter `CloudTrailEventCount` in namespace `${project_name}/monitoring`.
+- Added CloudWatch alarms for CloudTrail ingestion stalled, NAT route healer Lambda errors/throttles, EventBridge failed invocations, and EventBridge retry pressure.
+- Monitoring module now accepts the NAT route healer Lambda name and EventBridge rule name from root `main.tf`.
+- Monitoring module exports dashboard name plus alarm ARN/name maps; root `outputs.tf` exposes those outputs.
+- Removed the legacy `App-*` instance listing from `ssm-connect.sh`; the helper now focuses on NAT and private instances.
 
 ## Progress Update (2026-05-01, session 2)
 
@@ -75,9 +84,9 @@ See README.md for detailed architectural decisions and trade-offs.
 │   └── outputs.tf               # Route-healer module outputs (lambda/rule names)
 │
 └── modules/monitoring/
-    ├── main.tf                  # CloudTrail trail, CW log group, S3 bucket + policy, IAM role
-    ├── variables.tf             # Monitoring module inputs (project_name)
-    └── outputs.tf               # Monitoring exports (log group name, trail ARN)
+    ├── main.tf                  # CloudTrail, CW log group, metric filters, alarms, dashboard, S3 backing bucket, IAM role
+    ├── variables.tf             # Monitoring module inputs (project_name, NAT healer names, alarm tuning/actions)
+    └── outputs.tf               # Monitoring exports (log group, trail ARN, dashboard name, alarm maps)
 ```
 
 ## Prerequisites
@@ -129,7 +138,7 @@ terraform destroy
 
 ## Architecture
 
-### Current Implementation: Network + Compute Layers
+### Current Implementation: Network + Compute + Monitoring Layers
 
 The network module (`modules/network/`) instantiates the [terraform-aws-modules/vpc module](https://registry.terraform.io/modules/terraform-aws-modules/vpc/aws/~5.0) with custom configurations:
 
@@ -167,12 +176,15 @@ The NAT route-healer module (`modules/nat_route_healer/`) mitigates route drift 
 - **Lambda action**: maps ASG name -> private route table ID, resolves launched NAT instance ENI, and calls `ec2:ReplaceRoute` for `0.0.0.0/0`
 - **Outcome**: private subnets regain egress without requiring manual `terraform apply` after NAT replacement events
 
-The monitoring module (`modules/monitoring/`) provides CloudTrail audit logging:
+The monitoring module (`modules/monitoring/`) provides CloudTrail audit logging and operational visibility:
 
 - **CloudTrail trail** (`aws_cloudtrail.main`): single-region, global service events included, log file validation enabled
 - **CloudWatch log group** (`aws_cloudwatch_log_group.cloudtrail`): `/aws/cloudtrail/main`, 1-day retention
 - **S3 bucket** (`aws_s3_bucket.cloudtrail`): mandatory CloudTrail backing store, `force_destroy = true`, 1-day lifecycle expiration, public access blocked
 - **IAM role** (`aws_iam_role.cloudtrail_cloudwatch`): trust policy for `cloudtrail.amazonaws.com`, policy grants `logs:CreateLogStream` + `logs:PutLogEvents` on the log group
+- **Metric filter** (`aws_cloudwatch_log_metric_filter.cloudtrail_event_count`): emits `CloudTrailEventCount` to `${project_name}/monitoring`
+- **Alarms**: CloudTrail ingestion stalled, NAT healer Lambda errors/throttles, EventBridge failed invocations, EventBridge retry pressure
+- **Dashboard** (`aws_cloudwatch_dashboard.operations`): alarm status, CloudTrail event flow, NAT healer Lambda health, EventBridge delivery health
 - **Note:** CloudTrail always requires an S3 bucket even when streaming to CW Logs — S3 is the mandatory backing store, CW Logs is additive
 
 **user_data bootstrap sequence:**
@@ -251,11 +263,13 @@ The monitoring module (`modules/monitoring/`) provides CloudTrail audit logging:
 
 **Implemented:**
 - CloudTrail trail → CloudWatch Logs (`modules/monitoring/`) — captures all API activity, SSM events, IAM/STS calls
+- CloudWatch log metric filter for CloudTrail event flow
+- CloudWatch alarms for CloudTrail ingestion, NAT route healer Lambda health, and EventBridge delivery health
+- CloudWatch operations dashboard
 
 **Still needed:**
-- CloudWatch metric alarms (CPU, status checks, Lambda errors)
 - VPC Flow Logs for network-level observability
-- DLQ + alarm on route healer Lambda errors
+- DLQ or other failed-invocation capture path for route healer failures
 
 ## Known TODOs
 
@@ -279,9 +293,10 @@ The monitoring module (`modules/monitoring/`) provides CloudTrail audit logging:
    - Optional, but valuable for debugging network connectivity issues
    - Logs to CloudWatch Logs (cost: ~$0.50/GB in us-west-2)
 
-5. **NAT route-healer observability** (reliability follow-up)
-   - EventBridge delivery is best effort; keep a fallback runbook (`terraform apply`) if route updates lag or fail
-   - Consider adding CloudWatch alarms/log metric filters for Lambda errors and DLQ integration
+5. **NAT route-healer failure handling** (reliability follow-up)
+   - Current: CloudWatch alarms track Lambda errors/throttles and EventBridge failed invocations/retry pressure
+   - Still needed: DLQ or another failed-invocation capture path if operational replay is required
+   - Fallback remains `terraform apply` if route updates lag or fail
 
 ## Adding New Infrastructure
 
@@ -389,6 +404,6 @@ All tests terminated instances via `aws ec2 terminate-instances` and polled SSM 
 
 ## Current Status
 
-As of 2026-05-01, the network, compute, and audit logging layers are complete. The full resilience test matrix (all 9 failure combinations) has been validated. CloudTrail audit logging is live and streaming to CloudWatch Logs.
+As of 2026-05-01, the network, compute, audit logging, and operations monitoring layers are complete. The full resilience test matrix (all 9 failure combinations) has been validated. CloudTrail audit logging is live and streaming to CloudWatch Logs, and CloudWatch alarms/dashboard coverage is implemented for CloudTrail ingestion plus NAT route-healer Lambda/EventBridge health.
 
-Future phases (ALB, RDS, CloudWatch alarms) are documented but not actively planned — the primary goal of demonstrating NAT instance HA complexity and trade-offs has been achieved.
+Future phases (ALB, RDS, VPC Flow Logs, route-healer DLQ handling) are documented but not actively planned — the primary goal of demonstrating NAT instance HA complexity and trade-offs has been achieved.
