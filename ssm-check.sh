@@ -23,9 +23,10 @@ echo "=== SSM Connection Commands (Private Instances) ==="
 aws ec2 describe-instances \
   --profile "$PROFILE" --region "$REGION" \
   --filters "Name=instance-state-name,Values=running" \
-  --query "Reservations[].Instances[?!PublicIpAddress].[Tags[?Key=='Name']|[0].Value,InstanceId]" \
-  --output text | awk '{printf "%-40s %-20s %s\n", $1, $2, "aws ssm start-session --target " $2}' | \
-  column -t
+  --query "Reservations[].Instances[?!PublicIpAddress].[InstanceId,Tags[?Key=='Name']|[0].Value]" \
+  --output text | while read id name; do
+    echo "aws ssm start-session --target $id ($name)"
+  done
 
 echo ""
 echo "=== Cross-Check ==="
