@@ -3,5 +3,10 @@
     "allow": [
       "Bash(aws cloudtrail *)"
     ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
   }
 }
+
