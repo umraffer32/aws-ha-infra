@@ -51,12 +51,12 @@ This repo demonstrates that trade-off directly. It builds the cheaper path, meas
 | NAT route self-healer | Done |
 | CloudTrail audit logging | Done |
 | CloudWatch alarms and dashboard | Done |
-| Resilience testing | Done |
+| Resilience testing | Done (automated 15-combo failure simulation with CloudWatch + CloudTrail evidence capture) |
 | App tier and ALB | Planned |
 | RDS Multi-AZ | Planned |
 | VPC Flow Logs | Planned |
 
-Validated recovery band: 55-158 seconds across the full failure matrix. The slow part is NAT bootstrap, not route repair.
+Latest full-matrix validation run (2026-05-02): 85-197 seconds across all 15 failure combinations (median 154s, average 149s). Recovery remains dominated by NAT/private bootstrap and SSM registration, not route replacement.
 
 ## Quick Start
 
