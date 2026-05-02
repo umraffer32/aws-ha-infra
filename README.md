@@ -83,6 +83,8 @@ Tear down:
 terraform destroy
 ```
 
+> **State:** `terraform.tfstate` is gitignored and stays local. A remote backend (S3 + DynamoDB) is on the roadmap for team use.
+
 ## Detailed Docs
 
 - [Architecture](docs/architecture.md): NAT instance design, route healer internals, monitoring, and what NAT Gateway would delete.
@@ -96,3 +98,5 @@ terraform destroy
 - [terraform-aws-modules/vpc](https://registry.terraform.io/modules/terraform-aws-modules/vpc/aws/~5.0)
 - [AWS: NAT Instances vs. NAT Gateway](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-comparison.html)
 - [AWS Well-Architected Framework, Reliability Pillar](https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/welcome.html)
+
+
