@@ -3,7 +3,7 @@
 ![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6-7B42BC?logo=terraform&logoColor=white&style=flat-square)
 ![AWS Provider](https://img.shields.io/badge/AWS_Provider-~5.0-FF9900?style=flat-square)
 ![Region](https://img.shields.io/badge/Region-us--west--2-232F3E?style=flat-square)
-![Recovery](https://img.shields.io/badge/Recovery-65%E2%80%93184s_%C2%B7_median_136s-2E7D32?style=flat-square)
+![Recovery](https://img.shields.io/badge/Recovery-78%E2%80%93219s_%C2%B7_avg_~149s-2E7D32?style=flat-square)
 
 A two-AZ AWS infrastructure project built with Terraform to explore the operational trade-offs of replacing managed NAT Gateway with self-managed NAT instances.
 
@@ -13,7 +13,7 @@ The key question: what does NAT Gateway abstract away, and how much engineering 
 
 ## What This Builds
 
-The stack runs a VPC across two Availability Zones with public and private subnets, one Debian NAT instance per AZ, private Ubuntu instances managed by Auto Scaling Groups, SSM-only access, CloudTrail audit logging, CloudWatch alarms, and an operations dashboard.
+The stack runs a VPC across two Availability Zones with public and private subnets, one Debian NAT instance per AZ, private Ubuntu instances managed by Auto Scaling Groups, a Multi-AZ PostgreSQL RDS instance, SSM-only access, CloudTrail audit logging, CloudWatch alarms, and an operations dashboard.
 
 The core reliability feature is `modules/nat_route_healer/`: an EventBridge + Lambda route repair path that updates private default routes when a NAT instance is replaced and receives a new ENI.
 
@@ -30,6 +30,9 @@ VPC 10.0.0.0/16
   Private subnets
     AZ-1 10.0.11.0/24 Ubuntu instance, ASG-managed
     AZ-2 10.0.12.0/24 Ubuntu instance, ASG-managed
+
+  RDS Multi-AZ PostgreSQL 16
+    Primary + standby spread across both private subnets
 ```
 
 ## Stack
@@ -40,6 +43,7 @@ VPC 10.0.0.0/16
 | Network | VPC, public/private subnets, per-AZ route tables |
 | NAT | Debian 13 `t2.micro` instances, one ASG per AZ, Packer-baked AMI |
 | Private compute | Ubuntu 24.04 `t2.micro` instances, one ASG per AZ, Packer-baked AMI |
+| Database | RDS Multi-AZ PostgreSQL 16 `db.t3.micro`, encrypted, private subnets |
 | Route self-healing | EventBridge + Lambda |
 | Access | AWS SSM Session Manager, no SSH or keypairs |
 | Monitoring | CloudTrail, CloudWatch Logs, alarms, operations dashboard |
@@ -62,12 +66,12 @@ This repo demonstrates that trade-off directly. It builds the cheaper path, meas
 | CloudWatch alarms and dashboard | Done |
 | AMI baking (Packer) | Done (NAT: Debian 13 + awscli/iptables/SSM pre-installed; Private: Ubuntu 24.04 + SSM pre-initialized) |
 | Resilience testing | Done (automated 15-combo failure simulation with CloudWatch + CloudTrail evidence capture) |
+| RDS Multi-AZ PostgreSQL | Done (PostgreSQL 16, `db.t3.micro`, encrypted, private subnets) |
 | App tier and ALB | Planned |
-| RDS Multi-AZ | Planned |
 | VPC Flow Logs | Planned |
 
 > [!NOTE]
-> **Latest run (2026-05-02, baked AMIs):** 65–184s across all 15 failure combos · median 136s · average 120s. Baked AMIs cut average recovery by ~27s (~18%) vs. unbaked baseline of 147s. Single-instance scenarios saw the largest gains (e.g. 176s → 65s for a private instance). Recovery floor is now ASG scheduling + SSM registration, not package installation.
+> **Resilience testing (3 full-matrix runs, 45 scenarios total):** 78–219s range · avg ~149s across all runs. Recovery floor is ASG scheduling + OS boot + SSM registration (~55–90s combined). Route healer fires in 400–720ms per replacement. AZ isolation held across every multi-AZ failure combo.
 
 ## Quick Start
 
