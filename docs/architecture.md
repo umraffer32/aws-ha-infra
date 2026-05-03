@@ -7,12 +7,16 @@ This project builds a two-AZ AWS network and compute baseline with self-managed 
 ```text
 VPC 10.0.0.0/16
   Public subnets
-    AZ-1 10.0.1.0/24   NAT instance
-    AZ-2 10.0.2.0/24   NAT instance
+    AZ-1 10.0.1.0/24   NAT instance (ASG)
+    AZ-2 10.0.2.0/24   NAT instance (ASG)
 
   Private subnets
-    AZ-1 10.0.11.0/24  private Ubuntu instance
-    AZ-2 10.0.12.0/24  private Ubuntu instance
+    AZ-1 10.0.11.0/24  private Ubuntu instance (ASG)
+    AZ-2 10.0.12.0/24  private Ubuntu instance (ASG)
+
+  RDS (Multi-AZ PostgreSQL)
+    Primary             placed in one private subnet by AWS
+    Standby             placed in the other private subnet by AWS
 ```
 
 The network module creates the VPC, subnets, public route table, private route tables, and tags. NAT Gateway is disabled. Private default routes are created by the compute module because the target is the live ENI of each NAT instance.
@@ -83,6 +87,17 @@ This removes the need for manual `terraform apply` after normal NAT replacement 
 
 Alarm actions default to empty lists, so alarms exist for visibility but do not notify until action ARNs are provided.
 
+## RDS
+
+`modules/rds/` provisions a Multi-AZ PostgreSQL instance in the private subnets.
+
+- Engine: PostgreSQL 16, `db.t3.micro`, 20 GiB gp2, encrypted at rest.
+- Multi-AZ standby in the second private subnet — AWS manages failover automatically.
+- No public access. Security group allows inbound port 5432 only from the private instance security group.
+- 7-day automated backup retention. `skip_final_snapshot = true` and `deletion_protection = false` for demo teardown.
+- Credentials (`db_name`, `db_username`, `db_password`) passed in via `terraform.tfvars`. `db_password` is marked `sensitive`.
+- Provision time is ~15–25 minutes. For fast iteration that doesn't involve RDS, comment out `module "rds"` in `main.tf`.
+
 ## Design Decisions
 
 ### NAT Instances over NAT Gateway
@@ -93,7 +108,7 @@ The cost savings come with real operational ownership: bootstrap scripts, source
 
 ### Two AZs over Three
 
-Two AZs are enough for this stack's current shape: stateless compute, future ALB, and future RDS Multi-AZ. A third AZ would add a third NAT instance, route table set, subnet set, and more operational surface without improving a non-quorum workload.
+Two AZs are enough for this stack's current shape: stateless compute, future ALB, and RDS Multi-AZ. A third AZ would add a third NAT instance, route table set, subnet set, and more operational surface without improving a non-quorum workload.
 
 Three AZs would become appropriate if the project added a self-managed quorum system such as Kafka, etcd, or Consul.
 

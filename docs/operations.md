@@ -26,6 +26,9 @@ Root variables live in `variables.tf`.
 | `project_name` | `ha` | Resource name prefix and tag value |
 | `debian_version` | `13` | Debian major version used as Packer source AMI base for NAT images |
 | `ubuntu_version` | `24.04` | Ubuntu LTS version used as Packer source AMI base for private images |
+| `db_name` | `appdb` | Name of the initial PostgreSQL database |
+| `db_username` | `appuser` | Master username for the PostgreSQL database |
+| `db_password` | _(none)_ | Master password — must be set in `terraform.tfvars` (sensitive, never committed) |
 
 Note: the compute module looks up live AMIs from self-owned baked images (`nat-instance-*` and `private-instance-*`), not directly from Debian/Ubuntu. These variables only control which base OS Packer builds on top of.
 
@@ -97,6 +100,7 @@ Useful Terraform outputs include VPC ID, subnet IDs, NAT ASG names, private ASG 
     network/
     compute/
     nat_route_healer/
+    rds/
     monitoring/
 ```
 
@@ -105,6 +109,7 @@ Module responsibilities:
 - `modules/network/`: VPC, subnets, route tables, and network tags.
 - `modules/compute/`: NAT instances, private instances, security groups, launch templates, ASGs, and private default routes.
 - `modules/nat_route_healer/`: EventBridge, Lambda, IAM, and route replacement logic.
+- `modules/rds/`: Multi-AZ PostgreSQL RDS instance, DB subnet group, and security group.
 - `modules/monitoring/`: CloudTrail, CloudWatch Logs, metric filters, alarms, dashboard, and CloudTrail S3 backing bucket.
 
 ## AMI Management
@@ -139,7 +144,9 @@ Approximate monthly baseline for the current two-AZ demo shape:
 | Resource | Estimate |
 |---|---|
 | VPC, subnets, route tables | $0 |
-| NAT instances, `t2.micro` x2 | $0 during eligible Free Tier, about $17/month after |
+| NAT instances, `t2.micro` x2 | $0 during eligible Free Tier, ~$17/month after |
+| Private instances, `t2.micro` x2 | $0 during eligible Free Tier, ~$17/month after |
+| RDS Multi-AZ `db.t3.micro`, 20 GiB gp2 | ~$26/month (not Free Tier eligible for Multi-AZ) |
 | SSM agent | $0 |
 | CloudWatch Logs and CloudTrail S3 | Low for this demo with 1-day retention, usage-dependent |
 
@@ -153,3 +160,5 @@ Run `terraform destroy` when the environment is not needed.
 - `terraform.tfstate` is committed for demo simplicity. Production should use an S3 backend with versioning and DynamoDB locking.
 - The ASGs use min/max/desired of 1 per AZ, so there is a zero-instance gap during replacement.
 - ASG health checks are EC2-level only. App-layer health checks will need ALB integration when the app tier is added.
+- RDS Multi-AZ takes ~15–25 minutes to provision and ~30–45 minutes for a full destroy+apply cycle. Comment out `module "rds"` in `main.tf` to skip it when iterating on other parts of the stack.
+- `db_password` must be set in `terraform.tfvars` and is gitignored. If it is missing, `terraform plan` will prompt interactively.

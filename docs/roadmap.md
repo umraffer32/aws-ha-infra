@@ -4,26 +4,20 @@ The primary goal of demonstrating NAT instance high availability complexity is c
 
 ## Completed (2026-05-02)
 
-- **AMI baking with Packer** — both NAT (Debian 13) and private (Ubuntu 24.04) instances now launch from pre-baked AMIs with all dependencies installed. Recovery time improved from 147s average to 120s average (-18%) across the 15-combo failure matrix.
+- **AMI baking with Packer** — both NAT (Debian 13) and private (Ubuntu 24.04) instances now launch from pre-baked AMIs with all dependencies installed. Recovery time improved from ~154s average to ~145s average (-6%) across the 15-combo failure matrix.
+- **RDS** — Multi-AZ PostgreSQL 16 on `db.t3.micro`, encrypted at rest, in private subnets with security group scoped to the private instance SG. Credentials managed via sensitive `terraform.tfvars` variable.
+- **Monitoring** — CloudTrail trail with CloudWatch Logs delivery, metric filters, alarms (CloudTrail ingestion stall, Lambda errors/throttles, EventBridge failed/retry invocations), and a CloudWatch operations dashboard.
 
 ## App Tier
 
-- Add an application Auto Scaling Group in private subnets.
 - Add an Application Load Balancer in public subnets.
 - Add target groups and ALB health checks.
-- Add security groups for ALB to app and app to database traffic.
+- Add security groups for ALB-to-app and app-to-RDS traffic.
 - Export app and ALB outputs for validation.
 
-## Database
-
-- Add an RDS Multi-AZ PostgreSQL or MySQL module.
-- Add DB subnet group, parameter group, option group if needed, and security groups.
-- Keep database subnets private.
-
-## Monitoring
+## Monitoring (remaining)
 
 - Add VPC Flow Logs for network-level troubleshooting.
-- Decide whether logs should land in CloudWatch Logs or S3.
 - Add app-tier metrics and alarms after the app tier exists.
 
 ## Reliability

@@ -41,9 +41,10 @@ Two-AZ AWS stack demonstrating self-managed NAT instances as a NAT Gateway repla
 ### Module Responsibilities
 
 - **`modules/network/`** — VPC, subnets, route tables. Private route tables are created here but their default routes are managed by `modules/compute/` (because the target is the live NAT ENI, known only after instances start).
-- **`modules/compute/`** — NAT and private launch templates, ASGs, security groups, and `aws_route` resources for private default routes. NAT instances self-modify `source_dest_check = false` via IMDSv2 + `aws ec2 modify-instance-attribute` in user data — Terraform's `network_interfaces` block does not support this attribute.
-- **`modules/nat_route_healer/`** — EventBridge rule watching `EC2 Instance Launch Successful` on NAT ASGs → Lambda → `ec2:ReplaceRoute`. The Lambda source is inlined as a Terraform `local` and zipped via the `archive` provider. No external Lambda files exist.
-- **`modules/monitoring/`** — CloudTrail, CloudWatch log group, metric filters, alarms, and operations dashboard.
+- **`modules/compute/`** — NAT and private launch templates, ASGs (one per AZ for both NAT and private), security groups, and `aws_route` resources for private default routes. At apply time, `data.aws_instance.nat_runtime` looks up the running NAT instance by Name tag and routes point to its primary ENI. NAT instances self-modify `source_dest_check = false` via IMDSv2 + `aws ec2 modify-instance-attribute` in user data — Terraform's `network_interfaces` block does not support this attribute.
+- **`modules/nat_route_healer/`** — EventBridge rule watching `EC2 Instance Launch Successful` on NAT ASGs → Lambda → `ec2:ReplaceRoute`. Fixes the stale-route problem when ASG replaces a NAT instance (new ENI, old route). Lambda source is inlined as a Terraform `local` and zipped via the `archive` provider. No external Lambda files exist.
+- **`modules/rds/`** — Multi-AZ PostgreSQL RDS instance in private subnets. Encrypted, no public access, 7-day backup retention. Security group allows port 5432 inbound only from the private instance security group. Credentials passed in via `terraform.tfvars` (`db_name`, `db_username`, `db_password`). Takes ~15–25 min to provision; comment out `module "rds"` in `main.tf` to skip it during fast iteration.
+- **`modules/monitoring/`** — CloudTrail (single-region, CW Logs delivery), CloudWatch metric filters, alarms for CloudTrail ingestion stall / Lambda errors+throttles / EventBridge failed+retry invocations, and an operations dashboard.
 
 ### AMI Strategy
 
