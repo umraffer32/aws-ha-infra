@@ -71,3 +71,92 @@ Three successful full-matrix runs (15 failure combos each). All runs used baked 
 - 92 CloudTrail events in the run window: `TerminateInstances`, `RunInstances`, `ReplaceRoute`
 - 76 NAT route healer Lambda log events
 - 15 `ReplaceRoute` events — one per NAT replacement, zero false positives
+
+
+## RDS Failover Test: 2026-05-03
+
+Run timestamp: 2026-05-03 6:23:01 PM UTC  
+Script: `rds-sim.sh`  
+DB instance: `main-postgres`  
+Probe host: `i-0f18ee25cc6ab6b41`  
+
+| Metric | Value |
+|---|---|
+| psql writer-unavailability window | 11.8s |
+| Status return-to-available | 72s |
+| Pre-failover primary AZ | us-west-2b |
+| Multi-AZ failover completed events | 3 |
+| Probe samples (total / failed) | 175 / 9 |
+| CloudTrail RebootDBInstance events | 1 |
+
+**RDS event timeline:**
+```
+  2026-05-03T18:05:14.680000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T18:05:31.666000+00:00 DB instance restarted
+  2026-05-03T18:05:49.561000+00:00 Multi-AZ instance failover completed
+  2026-05-03T18:05:49.561000+00:00 The user requested a failover of the DB instance.
+  2026-05-03T18:16:34.814000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T18:16:53.859000+00:00 DB instance restarted
+  2026-05-03T18:17:19.647000+00:00 The user requested a failover of the DB instance.
+  2026-05-03T18:17:19.647000+00:00 Multi-AZ instance failover completed
+  2026-05-03T18:21:24.744000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T18:21:41.013000+00:00 DB instance restarted
+  2026-05-03T18:21:49.687000+00:00 Multi-AZ instance failover completed
+  2026-05-03T18:21:49.687000+00:00 The user requested a failover of the DB instance.
+```
+
+**CloudTrail timeline:**
+```
+  2026-05-03T18:21:12Z RebootDBInstance (forceFailover=true)
+```
+
+> Note: `DBInstances[0].AvailabilityZone` lags by 3–6 minutes after a
+> Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
+> are unreliable in real time. The RDS event log above is authoritative.
+
+
+## RDS Failover Test: 2026-05-03
+
+Run timestamp: 2026-05-03 6:29:46 PM UTC  
+Script: `rds-sim.sh`  
+DB instance: `main-postgres`  
+Probe host: `i-0f18ee25cc6ab6b41`  
+
+| Metric | Value |
+|---|---|
+| psql writer-unavailability window | 10.2s |
+| Status return-to-available | 78s |
+| Pre-failover primary AZ | us-west-2b |
+| Multi-AZ failover completed events | 4 |
+| Probe samples (total / failed) | 185 / 5 |
+| CloudTrail RebootDBInstance events | 1 |
+
+**RDS event timeline:**
+```
+  2026-05-03T18:05:14.680000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T18:05:31.666000+00:00 DB instance restarted
+  2026-05-03T18:05:49.561000+00:00 Multi-AZ instance failover completed
+  2026-05-03T18:05:49.561000+00:00 The user requested a failover of the DB instance.
+  2026-05-03T18:16:34.814000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T18:16:53.859000+00:00 DB instance restarted
+  2026-05-03T18:17:19.647000+00:00 The user requested a failover of the DB instance.
+  2026-05-03T18:17:19.647000+00:00 Multi-AZ instance failover completed
+  2026-05-03T18:21:24.744000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T18:21:41.013000+00:00 DB instance restarted
+  2026-05-03T18:21:49.687000+00:00 Multi-AZ instance failover completed
+  2026-05-03T18:21:49.687000+00:00 The user requested a failover of the DB instance.
+  2026-05-03T18:28:04.880000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T18:28:21.065000+00:00 DB instance restarted
+  2026-05-03T18:28:49.738000+00:00 Multi-AZ instance failover completed
+  2026-05-03T18:28:49.739000+00:00 The user requested a failover of the DB instance.
+```
+
+**CloudTrail timeline:**
+```
+  2026-05-03T18:27:52Z RebootDBInstance (forceFailover=true)
+```
+
+> Note: `DBInstances[0].AvailabilityZone` lags by 3–6 minutes after a
+> Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
+> are unreliable in real time. The RDS event log above is authoritative.
+

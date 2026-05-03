@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Current State (2026-05-03)
+
+- **Infra:** Up. 4 instances Online in SSM, RDS Multi-AZ available. Private instances updated (apt update/upgrade).
+- **Last completed:** (1) `rds-sim.sh` run 4× — RDS Multi-AZ writer-unavailability **10.2s**, return-to-available **78s**. (2) Private instances patched: Private-2a all current, Private-2b kernel upgraded (6.17.0-1012→1013, reboot pending).
+- **Earlier:** 3 full failure-sim matrix runs (avg 149s EC2 recovery); `ssm-check.sh` patched for zero-instance state; CLAUDE.md "Current State" section added as the canonical status surface.
+- **Gotchas surfaced:** `psql --connect-timeout` is NOT a valid flag in psql 16 — use `PGCONNECT_TIMEOUT` env var. `DBInstances[0].AvailabilityZone` lags 3–6 minutes after Multi-AZ failover; use `describe-events` (authoritative) or the probe (real-time) instead. SSM RunShellScript: use `apt` not `apt-get` for proper package handling.
+- **Next:** ALB + app tier, VPC Flow Logs, Lambda DLQ, S3+DDB Terraform backend.
+
 ## Common Commands
 
 ```bash
