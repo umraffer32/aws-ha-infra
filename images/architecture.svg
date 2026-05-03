@@ -1,70 +1,139 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 530" width="720" height="530" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
-  <title>Highly Available AWS Architecture Across Two Availability Zones</title>
-  <desc>VPC contains two AZs, each with a public subnet hosting a NAT gateway and a private subnet hosting an Auto Scaling Group and RDS instance. An Application Load Balancer spans both AZs.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 640" width="900" height="640"
+     font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <title>HA AWS Infrastructure — Current Implementation (NAT Instances + Route Healer)</title>
 
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M2 1 L8 5 L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M1 1 L9 5 L1 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arr-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M1 1 L9 5 L1 9" fill="none" stroke="#D97706" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     </marker>
   </defs>
 
-  <!-- White background so it looks clean on GitHub -->
-  <rect x="0" y="0" width="720" height="530" fill="#FFFFFF"/>
+  <!-- Background -->
+  <rect width="900" height="640" fill="#FFFFFF"/>
 
-  <!-- Route 53 / Users -->
-  <rect x="290" y="20" width="140" height="40" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
-  <text x="360" y="45" text-anchor="middle" font-size="14" font-weight="500" fill="#2C2C2A">Route 53 / Users</text>
+  <!-- ── Internet / Users ─────────────────────────────────────── -->
+  <rect x="345" y="12" width="210" height="36" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.75"/>
+  <text x="450" y="35" text-anchor="middle" font-size="14" font-weight="600" fill="#2C2C2A">Internet / Users</text>
+  <line x1="450" y1="48" x2="450" y2="68" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arr)"/>
 
-  <line x1="360" y1="60" x2="360" y2="100" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- ── Internet Gateway ─────────────────────────────────────── -->
+  <rect x="320" y="68" width="260" height="32" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.75"/>
+  <text x="450" y="89" text-anchor="middle" font-size="13" font-weight="500" fill="#2C2C2A">Internet Gateway</text>
+  <line x1="450" y1="100" x2="450" y2="118" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arr)"/>
 
-  <!-- Internet Gateway -->
-  <rect x="290" y="100" width="140" height="36" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
-  <text x="360" y="123" text-anchor="middle" font-size="14" font-weight="500" fill="#2C2C2A">Internet Gateway</text>
+  <!-- ── VPC container ────────────────────────────────────────── -->
+  <rect x="20" y="114" width="860" height="414" rx="16" fill="#F8F7F2" stroke="#9B9A96" stroke-width="1"/>
+  <text x="38" y="133" font-size="11" fill="#5F5E5A">VPC  10.0.0.0/16  ·  region: us-west-2</text>
 
-  <line x1="360" y1="136" x2="360" y2="180" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- ══ AZ  us-west-2a ══════════════════════════════════════════ -->
+  <rect x="36" y="142" width="390" height="294" rx="10" fill="#E8F4EE" stroke="#2D7D5A" stroke-width="0.75"/>
+  <text x="54" y="160" font-size="12" font-weight="600" fill="#085041">us-west-2a</text>
 
-  <!-- VPC outer container -->
-  <rect x="40" y="155" width="640" height="355" rx="20" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
-  <text x="60" y="176" font-size="12" fill="#444441">VPC (10.0.0.0/16)</text>
+  <!-- AZ-a · Public subnet -->
+  <rect x="54" y="168" width="354" height="108" rx="7" fill="#EAF2FB" stroke="#1D6FAF" stroke-width="0.75"/>
+  <text x="70" y="184" font-size="11" font-weight="500" fill="#0C447C">Public subnet  10.0.1.0/24</text>
+  <!-- NAT instance -->
+  <rect x="70" y="190" width="322" height="74" rx="5" fill="#FFFFFF" stroke="#1D6FAF" stroke-width="0.75"/>
+  <rect x="70" y="190" width="36" height="14" rx="3" fill="#1D6FAF"/>
+  <text x="88" y="201" text-anchor="middle" font-size="8" font-weight="700" fill="#FFFFFF">ASG</text>
+  <text x="231" y="211" text-anchor="middle" font-size="13" font-weight="600" fill="#0C447C">NAT Instance</text>
+  <text x="231" y="229" text-anchor="middle" font-size="10.5" fill="#1D6FAF">Debian 13  ·  t2.micro  ·  Packer AMI</text>
+  <text x="231" y="247" text-anchor="middle" font-size="10.5" fill="#1D6FAF">source_dest_check=false  ·  iptables MASQUERADE</text>
 
-  <!-- ALB strip -->
-  <rect x="100" y="180" width="520" height="50" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
-  <text x="360" y="200" text-anchor="middle" font-size="14" font-weight="500" fill="#0C447C">Application Load Balancer</text>
-  <text x="360" y="218" text-anchor="middle" font-size="12" fill="#185FA5">Spans both AZs</text>
+  <!-- Route annotation between subnets (AZ-a) -->
+  <text x="231" y="283" text-anchor="middle" font-size="9" fill="#5F5E5A">↑  0.0.0.0/0 → NAT ENI  (auto-healed on replace)</text>
 
-  <!-- AZ-A container -->
-  <rect x="60" y="250" width="290" height="240" rx="12" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
-  <text x="78" y="270" font-size="14" font-weight="500" fill="#085041">Availability Zone A</text>
+  <!-- AZ-a · Private subnet -->
+  <rect x="54" y="290" width="354" height="136" rx="7" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.75"/>
+  <text x="70" y="306" font-size="11" font-weight="500" fill="#3C3489">Private subnet  10.0.11.0/24</text>
+  <!-- Private instance -->
+  <rect x="70" y="312" width="322" height="104" rx="5" fill="#FFFFFF" stroke="#534AB7" stroke-width="0.75"/>
+  <rect x="70" y="312" width="36" height="14" rx="3" fill="#534AB7"/>
+  <text x="88" y="323" text-anchor="middle" font-size="8" font-weight="700" fill="#FFFFFF">ASG</text>
+  <text x="231" y="333" text-anchor="middle" font-size="13" font-weight="600" fill="#3C3489">Private Instance</text>
+  <text x="231" y="351" text-anchor="middle" font-size="10.5" fill="#534AB7">Ubuntu 24.04  ·  t2.micro  ·  Packer AMI</text>
+  <text x="231" y="369" text-anchor="middle" font-size="10.5" fill="#534AB7">No public IP  ·  egress via NAT instance</text>
+  <text x="231" y="387" text-anchor="middle" font-size="10.5" fill="#534AB7">Access: SSM Session Manager only</text>
 
-  <!-- AZ-A Public subnet -->
-  <rect x="80" y="284" width="250" height="64" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
-  <text x="92" y="302" font-size="14" font-weight="500" fill="#0C447C">Public subnet</text>
-  <text x="92" y="322" font-size="12" fill="#185FA5">NAT Gateway</text>
-  <text x="92" y="338" font-size="12" fill="#185FA5">Internet egress for AZ-A</text>
+  <!-- ══ AZ  us-west-2b ══════════════════════════════════════════ -->
+  <rect x="474" y="142" width="390" height="294" rx="10" fill="#E8F4EE" stroke="#2D7D5A" stroke-width="0.75"/>
+  <text x="492" y="160" font-size="12" font-weight="600" fill="#085041">us-west-2b</text>
 
-  <!-- AZ-A Private subnet -->
-  <rect x="80" y="358" width="250" height="116" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
-  <text x="92" y="376" font-size="14" font-weight="500" fill="#3C3489">Private subnet</text>
-  <text x="92" y="396" font-size="12" fill="#534AB7">EC2 (Auto Scaling Group)</text>
-  <text x="92" y="414" font-size="12" fill="#534AB7">RDS primary</text>
-  <text x="92" y="432" font-size="12" fill="#534AB7">No internet ingress</text>
+  <!-- AZ-b · Public subnet -->
+  <rect x="492" y="168" width="354" height="108" rx="7" fill="#EAF2FB" stroke="#1D6FAF" stroke-width="0.75"/>
+  <text x="508" y="184" font-size="11" font-weight="500" fill="#0C447C">Public subnet  10.0.2.0/24</text>
+  <!-- NAT instance -->
+  <rect x="508" y="190" width="322" height="74" rx="5" fill="#FFFFFF" stroke="#1D6FAF" stroke-width="0.75"/>
+  <rect x="508" y="190" width="36" height="14" rx="3" fill="#1D6FAF"/>
+  <text x="526" y="201" text-anchor="middle" font-size="8" font-weight="700" fill="#FFFFFF">ASG</text>
+  <text x="669" y="211" text-anchor="middle" font-size="13" font-weight="600" fill="#0C447C">NAT Instance</text>
+  <text x="669" y="229" text-anchor="middle" font-size="10.5" fill="#1D6FAF">Debian 13  ·  t2.micro  ·  Packer AMI</text>
+  <text x="669" y="247" text-anchor="middle" font-size="10.5" fill="#1D6FAF">source_dest_check=false  ·  iptables MASQUERADE</text>
 
-  <!-- AZ-B container -->
-  <rect x="370" y="250" width="290" height="240" rx="12" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
-  <text x="388" y="270" font-size="14" font-weight="500" fill="#085041">Availability Zone B</text>
+  <!-- Route annotation between subnets (AZ-b) -->
+  <text x="669" y="283" text-anchor="middle" font-size="9" fill="#5F5E5A">↑  0.0.0.0/0 → NAT ENI  (auto-healed on replace)</text>
 
-  <!-- AZ-B Public subnet -->
-  <rect x="390" y="284" width="250" height="64" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
-  <text x="402" y="302" font-size="14" font-weight="500" fill="#0C447C">Public subnet</text>
-  <text x="402" y="322" font-size="12" fill="#185FA5">NAT Gateway</text>
-  <text x="402" y="338" font-size="12" fill="#185FA5">Internet egress for AZ-B</text>
+  <!-- AZ-b · Private subnet -->
+  <rect x="492" y="290" width="354" height="136" rx="7" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.75"/>
+  <text x="508" y="306" font-size="11" font-weight="500" fill="#3C3489">Private subnet  10.0.12.0/24</text>
+  <!-- Private instance -->
+  <rect x="508" y="312" width="322" height="104" rx="5" fill="#FFFFFF" stroke="#534AB7" stroke-width="0.75"/>
+  <rect x="508" y="312" width="36" height="14" rx="3" fill="#534AB7"/>
+  <text x="526" y="323" text-anchor="middle" font-size="8" font-weight="700" fill="#FFFFFF">ASG</text>
+  <text x="669" y="333" text-anchor="middle" font-size="13" font-weight="600" fill="#3C3489">Private Instance</text>
+  <text x="669" y="351" text-anchor="middle" font-size="10.5" fill="#534AB7">Ubuntu 24.04  ·  t2.micro  ·  Packer AMI</text>
+  <text x="669" y="369" text-anchor="middle" font-size="10.5" fill="#534AB7">No public IP  ·  egress via NAT instance</text>
+  <text x="669" y="387" text-anchor="middle" font-size="10.5" fill="#534AB7">Access: SSM Session Manager only</text>
 
-  <!-- AZ-B Private subnet -->
-  <rect x="390" y="358" width="250" height="116" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
-  <text x="402" y="376" font-size="14" font-weight="500" fill="#3C3489">Private subnet</text>
-  <text x="402" y="396" font-size="12" fill="#534AB7">EC2 (Auto Scaling Group)</text>
-  <text x="402" y="414" font-size="12" fill="#534AB7">RDS standby</text>
-  <text x="402" y="432" font-size="12" fill="#534AB7">Auto-failover from AZ-A</text>
+  <!-- ══ Route Healer strip (bottom of VPC) ══════════════════════ -->
+  <rect x="36" y="450" width="828" height="66" rx="8" fill="#FEF3E2" stroke="#D97706" stroke-width="1"/>
+  <text x="52" y="467" font-size="11" font-weight="700" fill="#92400E">Route Healer — auto-repairs private route tables when a NAT instance is replaced and receives a new ENI</text>
+
+  <rect x="52" y="474" width="126" height="30" rx="4" fill="#FDE68A" stroke="#D97706" stroke-width="0.75"/>
+  <text x="115" y="493" text-anchor="middle" font-size="10.5" font-weight="500" fill="#78350F">ASG Launch Event</text>
+
+  <line x1="178" y1="489" x2="194" y2="489" stroke="#D97706" stroke-width="1.5" marker-end="url(#arr-amber)"/>
+
+  <rect x="194" y="474" width="126" height="30" rx="4" fill="#FDE68A" stroke="#D97706" stroke-width="0.75"/>
+  <text x="257" y="493" text-anchor="middle" font-size="10.5" font-weight="500" fill="#78350F">EventBridge Rule</text>
+
+  <line x1="320" y1="489" x2="336" y2="489" stroke="#D97706" stroke-width="1.5" marker-end="url(#arr-amber)"/>
+
+  <rect x="336" y="474" width="126" height="30" rx="4" fill="#FDE68A" stroke="#D97706" stroke-width="0.75"/>
+  <text x="399" y="493" text-anchor="middle" font-size="10.5" font-weight="500" fill="#78350F">Lambda (Python)</text>
+
+  <line x1="462" y1="489" x2="478" y2="489" stroke="#D97706" stroke-width="1.5" marker-end="url(#arr-amber)"/>
+
+  <rect x="478" y="474" width="126" height="30" rx="4" fill="#FDE68A" stroke="#D97706" stroke-width="0.75"/>
+  <text x="541" y="493" text-anchor="middle" font-size="10.5" font-weight="500" fill="#78350F">ec2:ReplaceRoute</text>
+
+  <line x1="604" y1="489" x2="620" y2="489" stroke="#D97706" stroke-width="1.5" marker-end="url(#arr-amber)"/>
+
+  <rect x="620" y="474" width="230" height="30" rx="4" fill="#FDE68A" stroke="#D97706" stroke-width="0.75"/>
+  <text x="735" y="493" text-anchor="middle" font-size="10.5" font-weight="500" fill="#78350F">Private route table updated ✓</text>
+
+  <!-- ── Monitoring strip (below VPC) ─────────────────────────── -->
+  <rect x="20" y="542" width="860" height="80" rx="12" fill="#F1EFE8" stroke="#9B9A96" stroke-width="0.75"/>
+  <text x="40" y="560" font-size="11" font-weight="600" fill="#5F5E5A">Monitoring</text>
+
+  <rect x="40" y="566" width="194" height="44" rx="6" fill="#FFFFFF" stroke="#9B9A96" stroke-width="0.75"/>
+  <text x="137" y="583" text-anchor="middle" font-size="12" font-weight="500" fill="#2C2C2A">CloudTrail</text>
+  <text x="137" y="600" text-anchor="middle" font-size="10" fill="#5F5E5A">S3 bucket · CloudWatch Logs</text>
+
+  <rect x="246" y="566" width="194" height="44" rx="6" fill="#FFFFFF" stroke="#9B9A96" stroke-width="0.75"/>
+  <text x="343" y="583" text-anchor="middle" font-size="12" font-weight="500" fill="#2C2C2A">CloudWatch Logs</text>
+  <text x="343" y="600" text-anchor="middle" font-size="10" fill="#5F5E5A">1-day log retention</text>
+
+  <rect x="452" y="566" width="194" height="44" rx="6" fill="#FFFFFF" stroke="#9B9A96" stroke-width="0.75"/>
+  <text x="549" y="583" text-anchor="middle" font-size="12" font-weight="500" fill="#2C2C2A">CW Alarms</text>
+  <text x="549" y="600" text-anchor="middle" font-size="10" fill="#5F5E5A">Lambda errors · ingestion stall</text>
+
+  <rect x="658" y="566" width="202" height="44" rx="6" fill="#FFFFFF" stroke="#9B9A96" stroke-width="0.75"/>
+  <text x="759" y="583" text-anchor="middle" font-size="12" font-weight="500" fill="#2C2C2A">Ops Dashboard</text>
+  <text x="759" y="600" text-anchor="middle" font-size="10" fill="#5F5E5A">CloudWatch operations view</text>
 
 </svg>

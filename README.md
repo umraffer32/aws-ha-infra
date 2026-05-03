@@ -1,5 +1,10 @@
 # Highly Available AWS Infrastructure Without a NAT Gateway
 
+![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6-7B42BC?logo=terraform&logoColor=white&style=flat-square)
+![AWS Provider](https://img.shields.io/badge/AWS_Provider-~5.0-FF9900?style=flat-square)
+![Region](https://img.shields.io/badge/Region-us--west--2-232F3E?style=flat-square)
+![Recovery](https://img.shields.io/badge/Recovery-65%E2%80%93184s_%C2%B7_median_136s-2E7D32?style=flat-square)
+
 A two-AZ AWS infrastructure project built with Terraform to explore the operational trade-offs of replacing managed NAT Gateway with self-managed NAT instances.
 
 The key question: what does NAT Gateway abstract away, and how much engineering is required to make the cheaper alternative resilient?
@@ -11,6 +16,10 @@ The key question: what does NAT Gateway abstract away, and how much engineering 
 The stack runs a VPC across two Availability Zones with public and private subnets, one Debian NAT instance per AZ, private Ubuntu instances managed by Auto Scaling Groups, SSM-only access, CloudTrail audit logging, CloudWatch alarms, and an operations dashboard.
 
 The core reliability feature is `modules/nat_route_healer/`: an EventBridge + Lambda route repair path that updates private default routes when a NAT instance is replaced and receives a new ENI.
+
+```
+NAT instance replaced → new ENI → EventBridge fires → Lambda calls ec2:ReplaceRoute → private traffic restored
+```
 
 ```text
 VPC 10.0.0.0/16
@@ -57,7 +66,8 @@ This repo demonstrates that trade-off directly. It builds the cheaper path, meas
 | RDS Multi-AZ | Planned |
 | VPC Flow Logs | Planned |
 
-Latest full-matrix validation run (2026-05-02, baked AMIs): 65–184 seconds across all 15 failure combinations (median 136s, average 120s). AMI baking reduced average recovery time by ~27s (~18%) vs the unbaked baseline of 147s average. Single-instance scenarios saw the largest gains (e.g. 176s → 65s for a private instance failure). Recovery floor is now dominated by ASG scheduling and SSM registration, not package installation.
+> [!NOTE]
+> **Latest run (2026-05-02, baked AMIs):** 65–184s across all 15 failure combos · median 136s · average 120s. Baked AMIs cut average recovery by ~27s (~18%) vs. unbaked baseline of 147s. Single-instance scenarios saw the largest gains (e.g. 176s → 65s for a private instance). Recovery floor is now ASG scheduling + SSM registration, not package installation.
 
 ## Quick Start
 
@@ -71,7 +81,7 @@ terraform apply
 Verify managed instances:
 
 ```bash
-./ssm-connect.sh
+./ssm-check.sh
 aws ssm describe-instance-information \
   --profile mrpocket2726 --region us-west-2 \
   --query "InstanceInformationList[].{ID:InstanceId,Name:ComputerName,Ping:PingStatus}" \
