@@ -29,8 +29,8 @@ VPC 10.0.0.0/16
 |---|---|
 | Infrastructure | Terraform, AWS provider |
 | Network | VPC, public/private subnets, per-AZ route tables |
-| NAT | Debian 13 `t2.micro` instances, one ASG per AZ |
-| Private compute | Ubuntu 24.04 `t2.micro` instances, one ASG per AZ |
+| NAT | Debian 13 `t2.micro` instances, one ASG per AZ, Packer-baked AMI |
+| Private compute | Ubuntu 24.04 `t2.micro` instances, one ASG per AZ, Packer-baked AMI |
 | Route self-healing | EventBridge + Lambda |
 | Access | AWS SSM Session Manager, no SSH or keypairs |
 | Monitoring | CloudTrail, CloudWatch Logs, alarms, operations dashboard |
@@ -51,12 +51,13 @@ This repo demonstrates that trade-off directly. It builds the cheaper path, meas
 | NAT route self-healer | Done |
 | CloudTrail audit logging | Done |
 | CloudWatch alarms and dashboard | Done |
+| AMI baking (Packer) | Done (NAT: Debian 13 + awscli/iptables/SSM pre-installed; Private: Ubuntu 24.04 + SSM pre-initialized) |
 | Resilience testing | Done (automated 15-combo failure simulation with CloudWatch + CloudTrail evidence capture) |
 | App tier and ALB | Planned |
 | RDS Multi-AZ | Planned |
 | VPC Flow Logs | Planned |
 
-Latest full-matrix validation run (2026-05-02): 85-197 seconds across all 15 failure combinations (median 154s, average 149s). Recovery remains dominated by NAT/private bootstrap and SSM registration, not route replacement.
+Latest full-matrix validation run (2026-05-02, baked AMIs): 65–184 seconds across all 15 failure combinations (median 136s, average 120s). AMI baking reduced average recovery time by ~27s (~18%) vs the unbaked baseline of 147s average. Single-instance scenarios saw the largest gains (e.g. 176s → 65s for a private instance failure). Recovery floor is now dominated by ASG scheduling and SSM registration, not package installation.
 
 ## Quick Start
 
