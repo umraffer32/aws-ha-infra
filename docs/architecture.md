@@ -45,7 +45,7 @@ Both NAT and private instances use pre-baked AMIs built with Packer (`nat-ami.pk
 **Private AMI** (`private-instance-*`, Ubuntu 24.04 base):
 - SSM agent pre-refreshed via snap (Ubuntu ships it pre-installed but not fully initialized)
 
-Baked AMIs reduced average recovery time by ~27 seconds (~18%) across the 15-combo failure matrix compared to the unbaked baseline. The biggest gains are in single-instance recovery scenarios where the bottleneck was boot-time package installation.
+Baked AMIs reduced average recovery time by ~0:27 (~18%) across the 15-combo failure matrix compared to the unbaked baseline. The biggest gains are in single-instance recovery scenarios where the bottleneck was boot-time package installation.
 
 ## NAT Instance Bootstrap
 
@@ -58,7 +58,7 @@ User data runs runtime-specific steps only (no package installs):
 
 Terraform's `aws_launch_template` resource does not support `source_dest_check = false` inside the `network_interfaces` block. The self-modify call is the workaround, and it requires `ec2:ModifyInstanceAttribute` on the instance role.
 
-The remaining recovery time (~90–180s in typical scenarios) is split between ASG replacement scheduling, instance OS boot, user data execution, SSM agent registration, and CloudWatch log propagation.
+The remaining recovery time (~1:30–3:00 in typical scenarios) is split between ASG replacement scheduling, instance OS boot, user data execution, SSM agent registration, and CloudWatch log propagation.
 
 ## Route Healer
 
@@ -96,7 +96,7 @@ Alarm actions default to empty lists, so alarms exist for visibility but do not 
 - No public access. Security group allows inbound port 5432 only from the private instance security group.
 - 7-day automated backup retention. `skip_final_snapshot = true` and `deletion_protection = false` for demo teardown.
 - Credentials (`db_name`, `db_username`, `db_password`) passed in via `terraform.tfvars`. `db_password` is marked `sensitive`.
-- Provision time is ~15–25 minutes. For fast iteration that doesn't involve RDS, comment out `module "rds"` in `main.tf`.
+- Provision time is ~15:00–25:00. For fast iteration that doesn't involve RDS, comment out `module "rds"` in `main.tf`.
 
 ## Design Decisions
 

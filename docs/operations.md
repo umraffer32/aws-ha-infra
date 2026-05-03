@@ -155,10 +155,10 @@ Run `terraform destroy` when the environment is not needed.
 ## Operational Gotchas
 
 - The private route points to a NAT instance ENI, so route repair is needed whenever a NAT ASG replaces an instance.
-- The route healer updates the route after launch, but NAT user data can still be running. A route can be active before packet forwarding is ready. With baked AMIs, user data runs in ~10-15s (runtime config only — no package installs), so this window is shorter than it used to be.
+- The route healer updates the route after launch, but NAT user data can still be running. A route can be active before packet forwarding is ready. With baked AMIs, user data runs in ~0:10-0:15 (runtime config only — no package installs), so this window is shorter than it used to be.
 - EventBridge delivery is best effort. Alarms cover Lambda and EventBridge health, but there is no DLQ yet. Fallback is `terraform apply`.
-- `terraform.tfstate` is committed for demo simplicity. Production should use an S3 backend with versioning and DynamoDB locking.
+- `terraform.tfstate` is local and gitignored in this repo. For shared/team workflows, use an S3 backend with versioning and DynamoDB locking.
 - The ASGs use min/max/desired of 1 per AZ, so there is a zero-instance gap during replacement.
 - ASG health checks are EC2-level only. App-layer health checks will need ALB integration when the app tier is added.
-- RDS Multi-AZ takes ~15–25 minutes to provision and ~30–45 minutes for a full destroy+apply cycle. Comment out `module "rds"` in `main.tf` to skip it when iterating on other parts of the stack.
+- RDS Multi-AZ takes ~15:00–25:00 to provision and ~30:00–45:00 for a full destroy+apply cycle. Comment out `module "rds"` in `main.tf` to skip it when iterating on other parts of the stack.
 - `db_password` must be set in `terraform.tfvars` and is gitignored. If it is missing, `terraform plan` will prompt interactively.

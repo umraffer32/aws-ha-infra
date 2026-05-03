@@ -4,7 +4,7 @@ The stack was tested with direct failure injection against live EC2 instances. T
 
 ## Baseline
 
-`terraform destroy` followed by `terraform apply` restored all four SSM-managed instances in **105 seconds**. The final four instances appeared in SSM 28 seconds after `terraform apply` completed.
+`terraform destroy` followed by `terraform apply` restored all four SSM-managed instances in **1:45**. The final four instances appeared in SSM 0:28 after `terraform apply` completed.
 
 ---
 
@@ -17,7 +17,7 @@ Both instance types were moved to Packer-baked AMIs on 2026-05-02 to eliminate p
 | `nat-instance-*` | Debian 13 | awscli, iptables-persistent, amazon-ssm-agent |
 | `private-instance-*` | Ubuntu 24.04 | amazon-ssm-agent (snap refresh + start) |
 
-After baking, the recovery floor shifted from package installation to: ASG scheduling (~20–40s), OS boot (~15–20s), user data execution (~10–15s), SSM agent registration (~10–30s). The Lambda route healer itself runs in **~400–720ms** once triggered.
+After baking, the recovery floor shifted from package installation to: ASG scheduling (~0:20–0:40), OS boot (~0:15–0:20), user data execution (~0:10–0:15), SSM agent registration (~0:10–0:30). The Lambda route healer itself runs in **~0:00.4–0:00.7** once triggered.
 
 ---
 
@@ -27,26 +27,26 @@ Three successful full-matrix runs (15 failure combos each). All runs used baked 
 
 | # | Scenario | Run 1 (05-02 21:53Z) | Run 2 (05-02 22:48Z) | Run 3 (05-03 00:32Z) |
 |---|---|---|---|---|
-| 1 | NAT-2a | 159s | 91s | 142s |
-| 2 | NAT-2b | 112s | 85s | 165s |
-| 3 | NAT-2a + NAT-2b | 130s | 171s | 112s |
-| 4 | Private-2a | 176s | 104s | 163s |
-| 5 | NAT-2a + Private-2a | 164s | 119s | 172s |
-| 6 | NAT-2b + Private-2a | 182s | 181s | 100s |
-| 7 | NAT-2a + NAT-2b + Private-2a | 205s | 185s | 136s |
-| 8 | Private-2b | 152s | 142s | 78s |
-| 9 | NAT-2a + Private-2b | 176s | 197s | 125s |
-| 10 | NAT-2b + Private-2b | 118s | 186s | 188s |
-| 11 | NAT-2a + NAT-2b + Private-2b | 118s | 175s | 160s |
-| 12 | Private-2a + Private-2b | 142s | 137s | 136s |
-| 13 | NAT-2a + Private-2a + Private-2b | 153s | 150s | 140s |
-| 14 | NAT-2b + Private-2a + Private-2b | 165s | 154s | 134s |
-| 15 | All 4 terminated | 153s | 158s | 219s |
-| | **Average** | **154s** | **149s** | **145s** |
-| | **Min** | **112s** | **85s** | **78s** |
-| | **Max** | **205s** | **197s** | **219s** |
+| 1 | NAT-2a | 2:39 | 1:31 | 2:22 |
+| 2 | NAT-2b | 1:52 | 1:25 | 2:45 |
+| 3 | NAT-2a + NAT-2b | 2:10 | 2:51 | 1:52 |
+| 4 | Private-2a | 2:56 | 1:44 | 2:43 |
+| 5 | NAT-2a + Private-2a | 2:44 | 1:59 | 2:52 |
+| 6 | NAT-2b + Private-2a | 3:02 | 3:01 | 1:40 |
+| 7 | NAT-2a + NAT-2b + Private-2a | 3:25 | 3:05 | 2:16 |
+| 8 | Private-2b | 2:32 | 2:22 | 1:18 |
+| 9 | NAT-2a + Private-2b | 2:56 | 3:17 | 2:05 |
+| 10 | NAT-2b + Private-2b | 1:58 | 3:06 | 3:08 |
+| 11 | NAT-2a + NAT-2b + Private-2b | 1:58 | 2:55 | 2:40 |
+| 12 | Private-2a + Private-2b | 2:22 | 2:17 | 2:16 |
+| 13 | NAT-2a + Private-2a + Private-2b | 2:33 | 2:30 | 2:20 |
+| 14 | NAT-2b + Private-2a + Private-2b | 2:45 | 2:34 | 2:14 |
+| 15 | All 4 terminated | 2:33 | 2:38 | 3:39 |
+| | **Average** | **2:34** | **2:29** | **2:25** |
+| | **Min** | **1:52** | **1:25** | **1:18** |
+| | **Max** | **3:25** | **3:17** | **3:39** |
 
-**Cross-run aggregate:** avg ~149s, floor 78s, ceiling 219s across 45 total scenarios.
+**Cross-run aggregate:** avg ~2:29, floor 1:18, ceiling 3:39 across 45 total scenarios.
 
 ---
 
@@ -54,15 +54,15 @@ Three successful full-matrix runs (15 failure combos each). All runs used baked 
 
 **AZ isolation held across the full matrix.** Failures in one AZ did not affect recovery in the other. Each NAT ASG and its healer operated independently.
 
-**Single-instance failures recover fastest.** Solo NAT or private failures generally landed in the 85–165s range. The healer fires within seconds of the new instance launching; the wait is OS boot + SSM registration.
+**Single-instance failures recover fastest.** Solo NAT or private failures generally landed in the 1:25–2:45 range. The healer fires within seconds of the new instance launching; the wait is OS boot + SSM registration.
 
-**Multi-instance failures are slower but bounded.** Worst observed was 219s (all 4 terminated). The ceiling comes from private instances depending on their AZ NAT being ready before SSM can register — creating a sequential dependency in same-AZ combos.
+**Multi-instance failures are slower but bounded.** Worst observed was 3:39 (all 4 terminated). The ceiling comes from private instances depending on their AZ NAT being ready before SSM can register — creating a sequential dependency in same-AZ combos.
 
-**Run-to-run variance is significant (~30–50s).** AWS scheduling jitter, SSM heartbeat timing, and Lambda cold starts make individual scenario times noisy. Averages across the 15-combo matrix are more meaningful than any single result.
+**Run-to-run variance is significant (~0:30–0:50).** AWS scheduling jitter, SSM heartbeat timing, and Lambda cold starts make individual scenario times noisy. Averages across the 15-combo matrix are more meaningful than any single result.
 
-**SSM sessions survived NAT loss.** Existing private-instance SSM sessions remained alive through blackhole windows of up to 123 seconds, confirming the control plane is resilient to data-plane outages.
+**SSM sessions survived NAT loss.** Existing private-instance SSM sessions remained alive through blackhole windows of up to 2:03, confirming the control plane is resilient to data-plane outages.
 
-**Route healer is fast and reliable.** Fired correctly on every NAT replacement across all runs. Lambda execution time was consistently 400–720ms. Private-only failures correctly produced no healer invocation (routes untouched).
+**Route healer is fast and reliable.** Fired correctly on every NAT replacement across all runs. Lambda execution time was consistently 0:00.4–0:00.7. Private-only failures correctly produced no healer invocation (routes untouched).
 
 ---
 
@@ -82,8 +82,8 @@ Probe host: `i-0f18ee25cc6ab6b41`
 
 | Metric | Value |
 |---|---|
-| psql writer-unavailability window | 11.8s |
-| Status return-to-available | 72s |
+| psql writer-unavailability window | 0:11.8 |
+| Status return-to-available | 1:12 |
 | Pre-failover primary AZ | us-west-2b |
 | Multi-AZ failover completed events | 3 |
 | Probe samples (total / failed) | 175 / 9 |
@@ -110,7 +110,7 @@ Probe host: `i-0f18ee25cc6ab6b41`
   2026-05-03T18:21:12Z RebootDBInstance (forceFailover=true)
 ```
 
-> Note: `DBInstances[0].AvailabilityZone` lags by 3–6 minutes after a
+> Note: `DBInstances[0].AvailabilityZone` lags by 3:00–6:00 after a
 > Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
 > are unreliable in real time. The RDS event log above is authoritative.
 
@@ -124,8 +124,8 @@ Probe host: `i-0f18ee25cc6ab6b41`
 
 | Metric | Value |
 |---|---|
-| psql writer-unavailability window | 10.2s |
-| Status return-to-available | 78s |
+| psql writer-unavailability window | 0:10.2 |
+| Status return-to-available | 1:18 |
 | Pre-failover primary AZ | us-west-2b |
 | Multi-AZ failover completed events | 4 |
 | Probe samples (total / failed) | 185 / 5 |
@@ -156,7 +156,347 @@ Probe host: `i-0f18ee25cc6ab6b41`
   2026-05-03T18:27:52Z RebootDBInstance (forceFailover=true)
 ```
 
-> Note: `DBInstances[0].AvailabilityZone` lags by 3–6 minutes after a
+> Note: `DBInstances[0].AvailabilityZone` lags by 3:00–6:00 after a
+> Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
+> are unreliable in real time. The RDS event log above is authoritative.
+
+
+## RDS Failover Test: 2026-05-03
+
+Run timestamp: 2026-05-03 7:41:10 PM UTC  
+Script: `rds-sim.sh`  
+DB instance: `main-postgres`  
+Probe host: `i-0f18ee25cc6ab6b41`  
+
+| Metric | Value |
+|---|---|
+| psql writer-unavailability window | 0:13.2 |
+| Status return-to-available | 1:12 |
+| Pre-failover primary AZ | us-west-2a |
+| Multi-AZ failover completed events | 1 |
+| Probe samples (total / failed) | 171 / 6 |
+| CloudTrail RebootDBInstance events | 1 |
+
+**RDS event timeline:**
+```
+  2026-05-03T19:39:30.415000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T19:39:46.838000+00:00 DB instance restarted
+  2026-05-03T19:40:20.305000+00:00 The user requested a failover of the DB instance.
+  2026-05-03T19:40:20.305000+00:00 Multi-AZ instance failover completed
+```
+
+**CloudTrail timeline:**
+```
+  2026-05-03T19:39:21Z RebootDBInstance (forceFailover=true)
+```
+
+> Note: `DBInstances[0].AvailabilityZone` lags by 3:00–6:00 after a
+> Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
+> are unreliable in real time. The RDS event log above is authoritative.
+
+
+## RDS Failover Test: 2026-05-03
+
+Run timestamp: 2026-05-03 7:45:07 PM UTC  
+Script: `rds-sim.sh`  
+DB instance: `main-postgres`  
+Probe host: `i-0f18ee25cc6ab6b41`  
+
+| Metric | Value |
+|---|---|
+| psql writer-unavailability window | 0:13.2 |
+| Status return-to-available | 3:09 |
+| Pre-failover primary AZ | us-west-2a |
+| Multi-AZ failover completed events | 1 |
+| Probe samples (total / failed) | 375 / 6 |
+| CloudTrail RebootDBInstance events | 1 |
+
+**RDS event timeline:**
+```
+  2026-05-03T19:43:30.385000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T19:43:44.785000+00:00 DB instance restarted
+  2026-05-03T19:44:20.325000+00:00 Multi-AZ instance failover completed
+  2026-05-03T19:44:20.325000+00:00 The user requested a failover of the DB instance.
+```
+
+**CloudTrail timeline:**
+```
+  2026-05-03T19:41:22Z RebootDBInstance (forceFailover=true)
+```
+
+> Note: `DBInstances[0].AvailabilityZone` lags by 3:00–6:00 after a
+> Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
+> are unreliable in real time. The RDS event log above is authoritative.
+
+
+## RDS Failover Test: 2026-05-03
+
+Run timestamp: 2026-05-03 7:49:04 PM UTC  
+Script: `rds-sim.sh`  
+DB instance: `main-postgres`  
+Probe host: `i-0f18ee25cc6ab6b41`  
+
+| Metric | Value |
+|---|---|
+| psql writer-unavailability window | 0:13.2 |
+| Status return-to-available | 3:09 |
+| Pre-failover primary AZ | us-west-2a |
+| Multi-AZ failover completed events | 1 |
+| Probe samples (total / failed) | 375 / 6 |
+| CloudTrail RebootDBInstance events | 1 |
+
+**RDS event timeline:**
+```
+  2026-05-03T19:47:25.420000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T19:47:40.831000+00:00 DB instance restarted
+  2026-05-03T19:48:20.367000+00:00 Multi-AZ instance failover completed
+  2026-05-03T19:48:20.367000+00:00 The user requested a failover of the DB instance.
+```
+
+**CloudTrail timeline:**
+```
+  2026-05-03T19:45:19Z RebootDBInstance (forceFailover=true)
+```
+
+> Note: `DBInstances[0].AvailabilityZone` lags by 3:00–6:00 after a
+> Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
+> are unreliable in real time. The RDS event log above is authoritative.
+
+
+## RDS Failover Test: 2026-05-03
+
+Run timestamp: 2026-05-03 7:53:13 PM UTC  
+Script: `rds-sim.sh`  
+DB instance: `main-postgres`  
+Probe host: `i-0f18ee25cc6ab6b41`  
+
+| Metric | Value |
+|---|---|
+| psql writer-unavailability window | 0:13.2 |
+| Status return-to-available | 3:21 |
+| Pre-failover primary AZ | us-west-2a |
+| Multi-AZ failover completed events | 1 |
+| Probe samples (total / failed) | 395 / 6 |
+| CloudTrail RebootDBInstance events | 1 |
+
+**RDS event timeline:**
+```
+  2026-05-03T19:51:30.452000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T19:51:46.797000+00:00 DB instance restarted
+  2026-05-03T19:52:20.392000+00:00 Multi-AZ instance failover completed
+  2026-05-03T19:52:20.393000+00:00 The user requested a failover of the DB instance.
+```
+
+**CloudTrail timeline:**
+```
+  2026-05-03T19:49:16Z RebootDBInstance (forceFailover=true)
+```
+
+> Note: `DBInstances[0].AvailabilityZone` lags by 3:00–6:00 after a
+> Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
+> are unreliable in real time. The RDS event log above is authoritative.
+
+
+## RDS Failover Test: 2026-05-03
+
+Run timestamp: 2026-05-03 7:57:09 PM UTC  
+Script: `rds-sim.sh`  
+DB instance: `main-postgres`  
+Probe host: `i-0f18ee25cc6ab6b41`  
+
+| Metric | Value |
+|---|---|
+| psql writer-unavailability window | 0:10.7 |
+| Status return-to-available | 3:08 |
+| Pre-failover primary AZ | us-west-2a |
+| Multi-AZ failover completed events | 1 |
+| Probe samples (total / failed) | 377 / 5 |
+| CloudTrail RebootDBInstance events | 1 |
+
+**RDS event timeline:**
+```
+  2026-05-03T19:55:30.490000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T19:55:47.006000+00:00 DB instance restarted
+  2026-05-03T19:56:20.426000+00:00 Multi-AZ instance failover completed
+  2026-05-03T19:56:20.426000+00:00 The user requested a failover of the DB instance.
+```
+
+**CloudTrail timeline:**
+```
+  2026-05-03T19:53:25Z RebootDBInstance (forceFailover=true)
+```
+
+> Note: `DBInstances[0].AvailabilityZone` lags by 3:00–6:00 after a
+> Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
+> are unreliable in real time. The RDS event log above is authoritative.
+
+
+## RDS Failover Test: 2026-05-03
+
+Run timestamp: 2026-05-03 8:01:06 PM UTC  
+Script: `rds-sim.sh`  
+DB instance: `main-postgres`  
+Probe host: `i-0f18ee25cc6ab6b41`  
+
+| Metric | Value |
+|---|---|
+| psql writer-unavailability window | 0:13.2 |
+| Status return-to-available | 3:09 |
+| Pre-failover primary AZ | us-west-2a |
+| Multi-AZ failover completed events | 1 |
+| Probe samples (total / failed) | 375 / 6 |
+| CloudTrail RebootDBInstance events | 1 |
+
+**RDS event timeline:**
+```
+  2026-05-03T19:59:25.518000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T19:59:40.654000+00:00 DB instance restarted
+  2026-05-03T19:59:50.446000+00:00 Multi-AZ instance failover completed
+  2026-05-03T19:59:50.447000+00:00 The user requested a failover of the DB instance.
+```
+
+**CloudTrail timeline:**
+```
+  2026-05-03T19:57:21Z RebootDBInstance (forceFailover=true)
+```
+
+> Note: `DBInstances[0].AvailabilityZone` lags by 3:00–6:00 after a
+> Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
+> are unreliable in real time. The RDS event log above is authoritative.
+
+
+## RDS Failover Test: 2026-05-03
+
+Run timestamp: 2026-05-03 8:05:03 PM UTC  
+Script: `rds-sim.sh`  
+DB instance: `main-postgres`  
+Probe host: `i-0f18ee25cc6ab6b41`  
+
+| Metric | Value |
+|---|---|
+| psql writer-unavailability window | 0:13.2 |
+| Status return-to-available | 3:09 |
+| Pre-failover primary AZ | us-west-2a |
+| Multi-AZ failover completed events | 1 |
+| Probe samples (total / failed) | 376 / 6 |
+| CloudTrail RebootDBInstance events | 1 |
+
+**RDS event timeline:**
+```
+  2026-05-03T20:03:25.722000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T20:03:41.158000+00:00 DB instance restarted
+  2026-05-03T20:04:20.491000+00:00 Multi-AZ instance failover completed
+  2026-05-03T20:04:20.491000+00:00 The user requested a failover of the DB instance.
+```
+
+**CloudTrail timeline:**
+```
+  2026-05-03T20:01:18Z RebootDBInstance (forceFailover=true)
+```
+
+> Note: `DBInstances[0].AvailabilityZone` lags by 3:00–6:00 after a
+> Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
+> are unreliable in real time. The RDS event log above is authoritative.
+
+
+## RDS Failover Test: 2026-05-03
+
+Run timestamp: 2026-05-03 8:09:02 PM UTC  
+Script: `rds-sim.sh`  
+DB instance: `main-postgres`  
+Probe host: `i-0f18ee25cc6ab6b41`  
+
+| Metric | Value |
+|---|---|
+| psql writer-unavailability window | 0:10.7 |
+| Status return-to-available | 3:09 |
+| Pre-failover primary AZ | us-west-2b |
+| Multi-AZ failover completed events | 1 |
+| Probe samples (total / failed) | 379 / 5 |
+| CloudTrail RebootDBInstance events | 1 |
+
+**RDS event timeline:**
+```
+  2026-05-03T20:07:20.572000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T20:07:36.033000+00:00 DB instance restarted
+  2026-05-03T20:08:20.533000+00:00 The user requested a failover of the DB instance.
+  2026-05-03T20:08:20.533000+00:00 Multi-AZ instance failover completed
+```
+
+**CloudTrail timeline:**
+```
+  2026-05-03T20:05:15Z RebootDBInstance (forceFailover=true)
+```
+
+> Note: `DBInstances[0].AvailabilityZone` lags by 3:00–6:00 after a
+> Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
+> are unreliable in real time. The RDS event log above is authoritative.
+
+
+## RDS Failover Test: 2026-05-03
+
+Run timestamp: 2026-05-03 8:13:10 PM UTC  
+Script: `rds-sim.sh`  
+DB instance: `main-postgres`  
+Probe host: `i-0f18ee25cc6ab6b41`  
+
+| Metric | Value |
+|---|---|
+| psql writer-unavailability window | 0:13 |
+| Status return-to-available | 3:19 |
+| Pre-failover primary AZ | us-west-2b |
+| Multi-AZ failover completed events | 1 |
+| Probe samples (total / failed) | 402 / 13 |
+| CloudTrail RebootDBInstance events | 1 |
+
+**RDS event timeline:**
+```
+  2026-05-03T20:11:30.612000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T20:11:46.705000+00:00 DB instance restarted
+  2026-05-03T20:12:20.547000+00:00 The user requested a failover of the DB instance.
+  2026-05-03T20:12:20.547000+00:00 Multi-AZ instance failover completed
+```
+
+**CloudTrail timeline:**
+```
+  2026-05-03T20:09:15Z RebootDBInstance (forceFailover=true)
+```
+
+> Note: `DBInstances[0].AvailabilityZone` lags by 3:00–6:00 after a
+> Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
+> are unreliable in real time. The RDS event log above is authoritative.
+
+
+## RDS Failover Test: 2026-05-03
+
+Run timestamp: 2026-05-03 8:17:09 PM UTC  
+Script: `rds-sim.sh`  
+DB instance: `main-postgres`  
+Probe host: `i-0f18ee25cc6ab6b41`  
+
+| Metric | Value |
+|---|---|
+| psql writer-unavailability window | 0:40.9 |
+| Status return-to-available | 3:10 |
+| Pre-failover primary AZ | us-west-2b |
+| Multi-AZ failover completed events | 1 |
+| Probe samples (total / failed) | 379 / 53 |
+| CloudTrail RebootDBInstance events | 1 |
+
+**RDS event timeline:**
+```
+  2026-05-03T20:15:30.645000+00:00 Multi-AZ instance failover started. 
+  2026-05-03T20:16:15.001000+00:00 DB instance restarted
+  2026-05-03T20:16:50.594000+00:00 The user requested a failover of the DB instance.
+  2026-05-03T20:16:50.594000+00:00 Multi-AZ instance failover completed
+```
+
+**CloudTrail timeline:**
+```
+  2026-05-03T20:13:23Z RebootDBInstance (forceFailover=true)
+```
+
+> Note: `DBInstances[0].AvailabilityZone` lags by 3:00–6:00 after a
 > Multi-AZ failover, so "before/after" AZ readings from describe-db-instances
 > are unreliable in real time. The RDS event log above is authoritative.
 
