@@ -1,3 +1,13 @@
+data "aws_ami" "nat" {
+  most_recent = true
+  owners      = ["self"]
+
+  filter {
+    name   = "name"
+    values = ["nat-instance-*"]
+  }
+}
+
 data "aws_ami" "debian" {
   most_recent = true
   owners      = ["136693071363"] # Debian's official AWS account
@@ -15,6 +25,16 @@ data "aws_ami" "debian" {
   filter {
     name   = "virtualization-type"
     values = ["hvm"]
+  }
+}
+
+data "aws_ami" "private_baked" {
+  most_recent = true
+  owners      = ["self"]
+
+  filter {
+    name   = "name"
+    values = ["private-instance-*"]
   }
 }
 

@@ -53,17 +53,10 @@ resource "aws_launch_template" "nat" {
   user_data = base64encode(<<-EOF
     #!/bin/bash
     set -eux
-    export DEBIAN_FRONTEND=noninteractive
-    sleep 10
     IFACE=$(ip route | awk '/default/ {print $5; exit}')
-    apt update
-    apt install -y awscli iptables-persistent
-    mkdir -p /tmp/ssm
-    cd /tmp/ssm
-    wget https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb
-    dpkg -i amazon-ssm-agent.deb || apt -f install -y
-    systemctl enable amazon-ssm-agent
+
     systemctl start amazon-ssm-agent
+
     echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-nat.conf
     sysctl --system
 
@@ -79,7 +72,6 @@ resource "aws_launch_template" "nat" {
     iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
     iptables -A FORWARD -j ACCEPT
     netfilter-persistent save
-    systemctl enable netfilter-persistent
   EOF
   )
 }

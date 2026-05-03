@@ -21,9 +21,9 @@ module "compute" {
   public_subnet_ids       = module.network.public_subnet_ids
   private_subnet_ids      = module.network.private_subnet_ids
   private_route_table_ids = module.network.private_route_table_ids
-  nat_ami_id              = data.aws_ami.debian.id
+  nat_ami_id              = data.aws_ami.nat.id
   nat_instance_type       = "t2.micro"
-  private_ami_id          = data.aws_ami.ubuntu.id
+  private_ami_id          = data.aws_ami.private_baked.id
   private_instance_type   = "t2.micro"
   iam_instance_profile    = "SSM-EC2"
 }
