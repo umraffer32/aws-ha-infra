@@ -64,11 +64,18 @@ if [[ ! -f terraform.tfvars ]]; then
   err "terraform.tfvars not found — needed for db_password."
   exit 1
 fi
-DB_PASSWORD=$(grep -E '^[[:space:]]*db_password' terraform.tfvars | sed -E 's/.*=[[:space:]]*"([^"]+)".*/\1/')
-if [[ -z "$DB_PASSWORD" ]]; then
-  err "Could not parse db_password from terraform.tfvars."
+DB_PASSWORD_LINE=$(grep -Em1 '^[[:space:]]*db_password[[:space:]]*=' terraform.tfvars || true)
+if [[ -z "$DB_PASSWORD_LINE" ]]; then
+  err "db_password was not found in terraform.tfvars."
   exit 1
 fi
+if [[ "$DB_PASSWORD_LINE" =~ ^[[:space:]]*db_password[[:space:]]*=[[:space:]]*\"([^\"]*)\"[[:space:]]*(#.*)?$ ]]; then
+  DB_PASSWORD="${BASH_REMATCH[1]}"
+else
+  err "Could not parse db_password from terraform.tfvars (expected quoted string on one line)."
+  exit 1
+fi
+DB_PASSWORD_SHELL=$(printf '%q' "$DB_PASSWORD")
 
 log "DB endpoint: $DB_HOST:$DB_PORT/$DB_NAME"
 
@@ -169,14 +176,17 @@ ssm_output() {
 log "Installing psql + writing probe..."
 SETUP=$(cat <<OUTER_EOF
 set -e
-which psql >/dev/null 2>&1 || sudo apt-get install -y postgresql-client >/dev/null
+if ! command -v psql >/dev/null 2>&1; then
+  sudo apt-get update >/dev/null
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql-client >/dev/null
+fi
 cat >${PROBE_SCRIPT} <<'INNER_EOF'
 #!/bin/bash
 DB_HOST="${DB_HOST}"
 DB_PORT="${DB_PORT}"
 DB_USER="${DB_USERNAME}"
 DB_NAME="${DB_NAME}"
-DB_PASS='${DB_PASSWORD}'
+DB_PASS=${DB_PASSWORD_SHELL}
 LOG="${PROBE_LOG}"
 export PGCONNECT_TIMEOUT=2
 while true; do
@@ -213,6 +223,7 @@ sleep "$PROBE_LEAD_SECONDS"
 # ── Trigger failover ──────────────────────────────────────────────────────────
 
 T_START=$(date +%s)
+T_START_ISO=$(date -u -d "@$T_START" '+%Y-%m-%dT%H:%M:%SZ')
 T_START_MS=$(( T_START * 1000 ))
 log "Triggering forced failover..."
 aws rds reboot-db-instance \
@@ -225,6 +236,7 @@ aws rds reboot-db-instance \
 log "Polling for status=available (timeout ${RECOVERY_TIMEOUT}s)..."
 elapsed=0
 POST_STATUS=""
+RECOVERY_TIMED_OUT=false
 while true; do
   POST_STATUS=$(aws rds describe-db-instances \
     --profile "$PROFILE" --region "$REGION" \
@@ -236,6 +248,7 @@ while true; do
   fi
   if (( elapsed >= RECOVERY_TIMEOUT )); then
     warn "Recovery timeout reached."
+    RECOVERY_TIMED_OUT=true
     break
   fi
   sleep 5
@@ -243,21 +256,30 @@ while true; do
 done
 T_END=$(date +%s)
 WALL=$(( T_END - T_START ))
-T_END_MS=$(( T_END * 1000 + 30000 ))
+if $RECOVERY_TIMED_OUT; then
+  WALL_DISPLAY="timeout (${WALL}s)"
+  warn "Did not observe status=available before timeout; collecting evidence anyway."
+else
+  WALL_DISPLAY="${WALL}s"
+fi
 
-log "Status=available; letting probe run +30s to capture writer-back signal..."
+log "Letting probe run +30s to capture writer-back signal..."
 sleep 30
+T_EVENTS_END=$(date +%s)
+T_EVENTS_END_ISO=$(date -u -d "@$T_EVENTS_END" '+%Y-%m-%dT%H:%M:%SZ')
+T_END_MS=$(( T_EVENTS_END * 1000 ))
 
 # describe-db-instances.AvailabilityZone lags by minutes after failover; use
 # describe-events as the authoritative record of failover start/restart/complete.
 EVENTS_JSON=$(aws rds describe-events \
   --profile "$PROFILE" --region "$REGION" \
   --source-identifier "$DB_INSTANCE_ID" --source-type db-instance \
-  --duration 30 \
+  --start-time "$T_START_ISO" \
+  --end-time "$T_EVENTS_END_ISO" \
   --query "Events[].{t:Date,m:Message}" --output json 2>/dev/null || echo "[]")
-EVENTS_TIMELINE=$(jq -r '.[] | "  \(.t) \(.m)"' <<<"$EVENTS_JSON" 2>/dev/null || echo "")
-FAILOVER_COMPLETED=$(jq -r '[.[] | select(.m | contains("failover completed"))] | length' <<<"$EVENTS_JSON" 2>/dev/null || echo 0)
-log "Failover completed events in last 30 min: $FAILOVER_COMPLETED"
+EVENTS_TIMELINE=$(jq -r 'sort_by(.t) | .[] | "  \(.t) \(.m)"' <<<"$EVENTS_JSON" 2>/dev/null || echo "")
+FAILOVER_COMPLETED=$(jq -r '[.[] | select((.m | ascii_downcase) | contains("failover completed"))] | length' <<<"$EVENTS_JSON" 2>/dev/null || echo 0)
+log "Failover completed events in this run window: $FAILOVER_COMPLETED"
 
 # ── Stop probe and pull log ───────────────────────────────────────────────────
 
@@ -273,11 +295,20 @@ OUTER_EOF
 )
 CMD_ID=$(ssm_run "$STOP")
 STATUS=$(ssm_wait "$CMD_ID")
+if [[ "$STATUS" != "Success" ]]; then
+  err "Probe stop/fetch failed (status=$STATUS)."
+  ssm_output "$CMD_ID" >&2 || true
+  exit 1
+fi
 PROBE_OUT=$(ssm_output "$CMD_ID")
+if ! grep -Eq '^[0-9]+\.[0-9]+ (OK|FAIL)$' <<<"$PROBE_OUT"; then
+  err "Probe output was empty or malformed; cannot compute writer-unavailability."
+  exit 1
+fi
 
 # ── Compute longest FAIL streak ───────────────────────────────────────────────
 
-DISCONNECT=$(awk '
+DISCONNECT=$(awk -v interval="${PROBE_INTERVAL}" '
   $2 == "FAIL" {
     if (start == "") start = $1
     last = $1
@@ -285,14 +316,14 @@ DISCONNECT=$(awk '
   }
   $2 == "OK" {
     if (start != "") {
-      diff = last - start
+      diff = (last - start) + interval
       if (diff > max) max = diff
       start = ""
     }
   }
   END {
     if (start != "") {
-      diff = last - start
+      diff = (last - start) + interval
       if (diff > max) max = diff
     }
     if (max == "") max = 0
@@ -339,7 +370,7 @@ mkdir -p "$(dirname "$REPORT")"
   echo "| Metric | Value |"
   echo "|---|---|"
   echo "| psql writer-unavailability window | ${DISCONNECT}s |"
-  echo "| Status return-to-available | ${WALL}s |"
+  echo "| Status return-to-available | ${WALL_DISPLAY} |"
   echo "| Pre-failover primary AZ | $PRE_AZ |"
   echo "| Multi-AZ failover completed events | $FAILOVER_COMPLETED |"
   echo "| Probe samples (total / failed) | $TOTAL_PROBE_LINES / $FAIL_LINES |"
@@ -366,7 +397,7 @@ mkdir -p "$(dirname "$REPORT")"
 ok "Done."
 echo ""
 echo "Writer-unavailability window: ${DISCONNECT}s"
-echo "Status return-to-available:   ${WALL}s"
+echo "Status return-to-available:   ${WALL_DISPLAY}"
 echo "Pre-failover AZ:              $PRE_AZ"
 echo "Failover completed events:    $FAILOVER_COMPLETED"
 echo "Report appended to $REPORT"
