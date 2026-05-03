@@ -27,3 +27,21 @@ variable "ubuntu_version" {
   type        = string
   default     = "24.04"
 }
+
+variable "db_name" {
+  description = "Name of the initial PostgreSQL database"
+  type        = string
+  default     = "appdb"
+}
+
+variable "db_username" {
+  description = "Master username for the PostgreSQL database"
+  type        = string
+  default     = "appuser"
+}
+
+variable "db_password" {
+  description = "Master password for the PostgreSQL database (set in terraform.tfvars)"
+  type        = string
+  sensitive   = true
+}

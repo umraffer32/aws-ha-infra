@@ -28,6 +28,18 @@ module "compute" {
   iam_instance_profile    = "SSM-EC2"
 }
 
+module "rds" {
+  source = "./modules/rds"
+
+  project_name              = var.project_name
+  vpc_id                    = module.network.vpc_id
+  private_subnet_ids        = module.network.private_subnet_ids
+  private_security_group_id = module.compute.private_security_group_id
+  db_name                   = var.db_name
+  db_username               = var.db_username
+  db_password               = var.db_password
+}
+
 module "monitoring" {
   source = "./modules/monitoring"
 

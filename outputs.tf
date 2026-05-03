@@ -67,3 +67,28 @@ output "nat_route_healer_event_rule_name" {
   description = "EventBridge rule name that triggers NAT route healing"
   value       = module.nat_route_healer.event_rule_name
 }
+
+output "db_endpoint" {
+  description = "RDS connection endpoint (hostname:port)"
+  value       = module.rds.db_endpoint
+}
+
+output "db_host" {
+  description = "RDS hostname (without port)"
+  value       = module.rds.db_host
+}
+
+output "db_port" {
+  description = "RDS port"
+  value       = module.rds.db_port
+}
+
+output "db_name" {
+  description = "Name of the PostgreSQL database"
+  value       = module.rds.db_name
+}
+
+output "db_instance_id" {
+  description = "RDS instance identifier"
+  value       = module.rds.db_instance_id
+}
