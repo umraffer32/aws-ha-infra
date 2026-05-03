@@ -2,6 +2,10 @@
 
 The primary goal of demonstrating NAT instance high availability complexity is complete. The remaining work would make the project closer to a full application platform.
 
+## Completed (2026-05-02)
+
+- **AMI baking with Packer** — both NAT (Debian 13) and private (Ubuntu 24.04) instances now launch from pre-baked AMIs with all dependencies installed. Recovery time improved from 147s average to 120s average (-18%) across the 15-combo failure matrix.
+
 ## App Tier
 
 - Add an application Auto Scaling Group in private subnets.

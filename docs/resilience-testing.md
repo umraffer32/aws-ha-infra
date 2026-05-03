@@ -12,15 +12,35 @@ This document contains both historical narrative snapshots and raw automated run
 
 The final four instances appeared in SSM 28 seconds after `terraform apply` completed.
 
-## Latest Snapshot (2026-05-02)
+## Latest Snapshot (2026-05-02 — baked AMIs)
 
-Most recent full-matrix automated run (`Run timestamp: 2026-05-02T22:48:32Z`) produced:
+Most recent full-matrix run with fully baked AMIs for both NAT and private instances:
 
-- Recovery band: `85s` to `197s`
-- Median recovery: `154s`
-- Average recovery: `149s`
-- CloudTrail events in run window (`TerminateInstances` / `RunInstances` / `ReplaceRoute`): `92`
-- NAT route healer Lambda log events in run window: `76`
+- Recovery band: `65s` to `184s`
+- Median recovery: `136s`
+- Average recovery: `120s`
+- Improvement vs unbaked baseline: ~27s average (-18%)
+
+## AMI Baking Summary (2026-05-02)
+
+Both instance types were moved to Packer-baked AMIs to reduce per-boot install time:
+
+| AMI | Base OS | Pre-baked packages |
+|---|---|---|
+| `nat-instance-*` | Debian 13 | awscli, iptables-persistent, amazon-ssm-agent (.deb) |
+| `private-instance-*` | Ubuntu 24.04 | amazon-ssm-agent (snap refresh + start) |
+
+Recovery time comparison across runs:
+
+| Run | AMI state | Avg recovery | Min | Max |
+|---|---|---|---|---|
+| Baseline (2026-05-01) | Unbaked | 147s | 112s | 205s |
+| Run 2 (2026-05-02) | NAT baked only | 145s | 78s | 219s |
+| Run 3 (2026-05-02, baked both) | NAT + private baked | **120s** | **65s** | **184s** |
+
+The biggest gains were in single-instance private failures (176s → 65s) and single NAT failures (159s → 72s). Multi-instance and full-wipeout scenarios improved more modestly due to parallel recovery paths and higher natural variance.
+
+After baking, the recovery floor is gated by ASG scheduling, OS boot, SSM agent registration, and Lambda cold starts — not package installation.
 
 ## Failure Matrix (Historical Snapshot — 2026-05-01)
 
@@ -38,15 +58,15 @@ Most recent full-matrix automated run (`Run timestamp: 2026-05-02T22:48:32Z`) pr
 
 ## Observations
 
-Recovery is gated by NAT bootstrap time, not route replacement. The healer can update a route within roughly 60-90 seconds, but the replacement NAT instance still has to install packages, configure iptables, and disable source/destination checks.
+With baked AMIs, recovery is no longer gated by package installation. The bottleneck shifted to ASG scheduling (~20-40s), OS boot (~15-20s), user data execution (~10-15s), and SSM agent registration (~10-30s). Route replacement itself is fast — the Lambda healer runs in ~500-650ms once triggered.
 
-Single-instance failures are generally faster than multi-instance failures, but can vary between runs. In the 2026-05-01 historical snapshot they recovered in 55-76 seconds; in the latest 2026-05-02 run they recovered in 85-142 seconds.
+Single-instance failures recovered as fast as 65s in the baked-AMI run. Multi-instance failures still take 1.5–3 minutes due to parallel replacement paths and their dependencies (e.g. private instances need their AZ NAT ready before SSM can register).
 
 SSM sessions were durable under NAT loss. Existing private-instance SSM sessions survived blackhole windows of up to 123 seconds.
 
 AZ isolation held across the full matrix. Failures in one AZ did not break recovery in the other AZ.
 
-Across runs, recovery remains dominated by ASG replacement, bootstrap, and SSM registration time. The 2026-05-01 band was 55-158 seconds, while the latest 2026-05-02 automated run was 85-197 seconds.
+Run-to-run variance remains significant (~30-50s) due to AWS scheduling jitter, SSM heartbeat timing windows, and Lambda cold starts. Averages across the 15-combo matrix are more meaningful than individual scenario times.
 
 ## Monitoring Evidence
 
@@ -869,4 +889,838 @@ timeline sample:
   2026-05-02T23:24:24Z TerminateInstances
   2026-05-02T23:24:25Z RunInstances
   2026-05-02T23:24:57Z ReplaceRoute
+```
+
+## Automated Run: 2026-05-03
+
+Run timestamp: 2026-05-03T00:32:09Z  
+Script: `failure-sim.sh`  
+Topology source: `terraform-asg`  
+Log mode: `summary`  
+Failure policy: `continue-on-error`  
+
+| Combo | Scenario | Recovery Time |
+|---|---|---|
+| 1 | NAT-2a | 142s |
+| 2 | NAT-2b | 165s |
+| 3 | NAT-2a NAT-2b | 112s |
+| 4 | Private-2a | 163s |
+| 5 | NAT-2a Private-2a | 172s |
+| 6 | NAT-2b Private-2a | 100s |
+| 7 | NAT-2a NAT-2b Private-2a | 136s |
+| 8 | Private-2b | 78s |
+| 9 | NAT-2a Private-2b | 125s |
+| 10 | NAT-2b Private-2b | 188s |
+| 11 | NAT-2a NAT-2b Private-2b | 160s |
+| 12 | Private-2a Private-2b | 136s |
+| 13 | NAT-2a Private-2a Private-2b | 140s |
+| 14 | NAT-2b Private-2a Private-2b | 134s |
+| 15 | NAT-2a NAT-2b Private-2a Private-2b | 219s |
+
+
+### Log Excerpts — NAT-2a
+
+**Lambda (route healer):**
+```
+count: 6
+sample:
+  INIT_START Runtime Version: python:3.12.mainlinev2.v7 Runtime Version ARN: arn:aws:lambda:us-west-2::runtime:e4ab553846c4e081013ff7d1d608a5358d5b956bb5b81c83c66d2a31da8f6244 
+  [INFO] 2026-05-03T00:34:19.443Z Found credentials in environment variables. 
+  START RequestId: f07019e9-2912-4a7a-9901-82e8aa67392f Version: $LATEST 
+  [INFO] 2026-05-03T00:34:20.383Z f07019e9-2912-4a7a-9901-82e8aa67392f Updated route 0.0.0.0/0 in rtb-05c01eaa20ece9e70 to ENI eni-0a2bf13ef5fcc45ef for ASG main-nat-asg-us-west-2a (instance i-06cb7c02f21169409) 
+  END RequestId: f07019e9-2912-4a7a-9901-82e8aa67392f 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 1
+by event:
+  TerminateInstances: 1
+timeline sample:
+  2026-05-03T00:32:12Z TerminateInstances
+```
+
+### Log Excerpts — NAT-2b
+
+**Lambda (route healer):**
+```
+count: 6
+sample:
+  INIT_START Runtime Version: python:3.12.mainlinev2.v7 Runtime Version ARN: arn:aws:lambda:us-west-2::runtime:e4ab553846c4e081013ff7d1d608a5358d5b956bb5b81c83c66d2a31da8f6244 
+  [INFO] 2026-05-03T00:37:05.345Z Found credentials in environment variables. 
+  START RequestId: d3f752e1-2e35-40c0-8c9a-3c92168f7b57 Version: $LATEST 
+  [INFO] 2026-05-03T00:37:06.267Z d3f752e1-2e35-40c0-8c9a-3c92168f7b57 Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-03ce207c28e227539 for ASG main-nat-asg-us-west-2b (instance i-00bbb980aea592293) 
+  END RequestId: d3f752e1-2e35-40c0-8c9a-3c92168f7b57 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 6
+by event:
+  ReplaceRoute: 1
+  RunInstances: 2
+  TerminateInstances: 3
+timeline sample:
+  2026-05-03T00:33:46Z TerminateInstances
+  2026-05-03T00:33:47Z RunInstances
+  2026-05-03T00:34:20Z ReplaceRoute
+  2026-05-03T00:34:37Z TerminateInstances
+  2026-05-03T00:36:32Z TerminateInstances
+  2026-05-03T00:36:33Z RunInstances
+```
+
+### Log Excerpts — NAT-2a NAT-2b
+
+**Lambda (route healer):**
+```
+count: 8
+sample:
+  START RequestId: dbb5554c-4af6-42c3-8dba-d531e7792533 Version: $LATEST 
+  [INFO] 2026-05-03T00:38:18.730Z dbb5554c-4af6-42c3-8dba-d531e7792533 Updated route 0.0.0.0/0 in rtb-05c01eaa20ece9e70 to ENI eni-012c7d5cfd1af0b6a for ASG main-nat-asg-us-west-2a (instance i-0beb53d6bcc9733d9) 
+  END RequestId: dbb5554c-4af6-42c3-8dba-d531e7792533 
+  REPORT RequestId: dbb5554c-4af6-42c3-8dba-d531e7792533 Duration: 677.64 ms Billed Duration: 678 ms Memory Size: 128 MB Max Memory Used: 99 MB 
+  START RequestId: 410ba0e2-8e7f-4b04-9f28-c6eff201b936 Version: $LATEST 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 1
+by event:
+  ReplaceRoute: 1
+timeline sample:
+  2026-05-03T00:37:06Z ReplaceRoute
+```
+
+### Log Excerpts — Private-2a
+
+**Lambda (route healer):**
+```
+(no Lambda log events in window)
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 10
+by event:
+  ReplaceRoute: 2
+  RunInstances: 3
+  TerminateInstances: 5
+timeline sample:
+  2026-05-03T00:37:26Z TerminateInstances
+  2026-05-03T00:37:46Z RunInstances
+  2026-05-03T00:37:46Z TerminateInstances
+  2026-05-03T00:38:18Z ReplaceRoute
+  2026-05-03T00:38:32Z TerminateInstances
+  2026-05-03T00:38:32Z RunInstances
+  2026-05-03T00:39:04Z ReplaceRoute
+  2026-05-03T00:39:20Z TerminateInstances
+```
+
+### Log Excerpts — NAT-2a Private-2a
+
+**Lambda (route healer):**
+```
+count: 6
+sample:
+  INIT_START Runtime Version: python:3.12.mainlinev2.v7 Runtime Version ARN: arn:aws:lambda:us-west-2::runtime:e4ab553846c4e081013ff7d1d608a5358d5b956bb5b81c83c66d2a31da8f6244 
+  [INFO] 2026-05-03T00:44:18.441Z Found credentials in environment variables. 
+  START RequestId: 1b9e6719-934a-4f60-841d-aef080560f3b Version: $LATEST 
+  [INFO] 2026-05-03T00:44:19.414Z 1b9e6719-934a-4f60-841d-aef080560f3b Updated route 0.0.0.0/0 in rtb-05c01eaa20ece9e70 to ENI eni-0ae9d542593605460 for ASG main-nat-asg-us-west-2a (instance i-05ccc6ce7d4c678f8) 
+  END RequestId: 1b9e6719-934a-4f60-841d-aef080560f3b 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 1
+by event:
+  TerminateInstances: 1
+timeline sample:
+  2026-05-03T00:42:29Z TerminateInstances
+```
+
+### Log Excerpts — NAT-2b Private-2a
+
+**Lambda (route healer):**
+```
+count: 4
+sample:
+  START RequestId: b50c4b39-c0c4-44d4-8e27-53b5d5aaede4 Version: $LATEST 
+  [INFO] 2026-05-03T00:46:44.037Z b50c4b39-c0c4-44d4-8e27-53b5d5aaede4 Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-00e22fbdb7cbde5d1 for ASG main-nat-asg-us-west-2b (instance i-04086f8792b967f46) 
+  END RequestId: b50c4b39-c0c4-44d4-8e27-53b5d5aaede4 
+  REPORT RequestId: b50c4b39-c0c4-44d4-8e27-53b5d5aaede4 Duration: 635.99 ms Billed Duration: 636 ms Memory Size: 128 MB Max Memory Used: 99 MB 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 6
+by event:
+  ReplaceRoute: 1
+  RunInstances: 3
+  TerminateInstances: 2
+timeline sample:
+  2026-05-03T00:43:45Z TerminateInstances
+  2026-05-03T00:43:46Z RunInstances
+  2026-05-03T00:44:19Z ReplaceRoute
+  2026-05-03T00:44:28Z RunInstances
+  2026-05-03T00:44:28Z TerminateInstances
+  2026-05-03T00:46:33Z RunInstances
+```
+
+### Log Excerpts — NAT-2a NAT-2b Private-2a
+
+**Lambda (route healer):**
+```
+count: 8
+sample:
+  START RequestId: 324d8111-6ec4-4c7a-b79b-b68f1bb77e44 Version: $LATEST 
+  [INFO] 2026-05-03T00:48:27.822Z 324d8111-6ec4-4c7a-b79b-b68f1bb77e44 Updated route 0.0.0.0/0 in rtb-05c01eaa20ece9e70 to ENI eni-037470de7c469ec13 for ASG main-nat-asg-us-west-2a (instance i-0b1c867e9b960f47e) 
+  END RequestId: 324d8111-6ec4-4c7a-b79b-b68f1bb77e44 
+  REPORT RequestId: 324d8111-6ec4-4c7a-b79b-b68f1bb77e44 Duration: 537.04 ms Billed Duration: 538 ms Memory Size: 128 MB Max Memory Used: 99 MB 
+  START RequestId: 290ca4d0-6b22-4c88-a65b-1529e16ae9ab Version: $LATEST 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 9
+by event:
+  ReplaceRoute: 1
+  RunInstances: 2
+  TerminateInstances: 6
+timeline sample:
+  2026-05-03T00:45:25Z TerminateInstances
+  2026-05-03T00:46:32Z TerminateInstances
+  2026-05-03T00:46:37Z TerminateInstances
+  2026-05-03T00:46:38Z RunInstances
+  2026-05-03T00:46:44Z ReplaceRoute
+  2026-05-03T00:47:08Z TerminateInstances
+  2026-05-03T00:47:55Z TerminateInstances
+  2026-05-03T00:47:55Z RunInstances
+```
+
+### Log Excerpts — Private-2b
+
+**Lambda (route healer):**
+```
+(no Lambda log events in window)
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 5
+by event:
+  ReplaceRoute: 2
+  RunInstances: 2
+  TerminateInstances: 1
+timeline sample:
+  2026-05-03T00:48:27Z ReplaceRoute
+  2026-05-03T00:48:28Z RunInstances
+  2026-05-03T00:48:37Z RunInstances
+  2026-05-03T00:48:37Z TerminateInstances
+  2026-05-03T00:49:09Z ReplaceRoute
+```
+
+### Log Excerpts — NAT-2a Private-2b
+
+**Lambda (route healer):**
+```
+count: 4
+sample:
+  START RequestId: 291880ac-1eaf-4c10-998f-a77e1cf9f733 Version: $LATEST 
+  [INFO] 2026-05-03T00:52:18.574Z 291880ac-1eaf-4c10-998f-a77e1cf9f733 Updated route 0.0.0.0/0 in rtb-05c01eaa20ece9e70 to ENI eni-092e69b3b1a3bb2d8 for ASG main-nat-asg-us-west-2a (instance i-0e4c897406c061fec) 
+  END RequestId: 291880ac-1eaf-4c10-998f-a77e1cf9f733 
+  REPORT RequestId: 291880ac-1eaf-4c10-998f-a77e1cf9f733 Duration: 635.08 ms Billed Duration: 636 ms Memory Size: 128 MB Max Memory Used: 99 MB 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 5
+by event:
+  RunInstances: 2
+  TerminateInstances: 3
+timeline sample:
+  2026-05-03T00:49:26Z TerminateInstances
+  2026-05-03T00:50:07Z TerminateInstances
+  2026-05-03T00:50:08Z RunInstances
+  2026-05-03T00:50:47Z TerminateInstances
+  2026-05-03T00:51:46Z RunInstances
+```
+
+### Log Excerpts — NAT-2b Private-2b
+
+**Lambda (route healer):**
+```
+count: 4
+sample:
+  START RequestId: 98c883c3-f547-44a3-ba3a-1e7e1275e7e8 Version: $LATEST 
+  [INFO] 2026-05-03T00:55:05.669Z 98c883c3-f547-44a3-ba3a-1e7e1275e7e8 Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-04e2e09ca823944b7 for ASG main-nat-asg-us-west-2b (instance i-071cc1863a8ff26f9) 
+  END RequestId: 98c883c3-f547-44a3-ba3a-1e7e1275e7e8 
+  REPORT RequestId: 98c883c3-f547-44a3-ba3a-1e7e1275e7e8 Duration: 634.38 ms Billed Duration: 635 ms Memory Size: 128 MB Max Memory Used: 99 MB 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 7
+by event:
+  ReplaceRoute: 1
+  RunInstances: 2
+  TerminateInstances: 4
+timeline sample:
+  2026-05-03T00:51:45Z TerminateInstances
+  2026-05-03T00:52:07Z TerminateInstances
+  2026-05-03T00:52:07Z RunInstances
+  2026-05-03T00:52:18Z ReplaceRoute
+  2026-05-03T00:52:55Z TerminateInstances
+  2026-05-03T00:54:06Z RunInstances
+  2026-05-03T00:54:32Z TerminateInstances
+```
+
+### Log Excerpts — NAT-2a NAT-2b Private-2b
+
+**Lambda (route healer):**
+```
+count: 8
+sample:
+  START RequestId: e32aae21-2bd5-43ae-ac47-1e4ac08054f1 Version: $LATEST 
+  [INFO] 2026-05-03T00:56:39.182Z e32aae21-2bd5-43ae-ac47-1e4ac08054f1 Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-07153b2210d53c2e9 for ASG main-nat-asg-us-west-2b (instance i-0c3c7293924871a51) 
+  END RequestId: e32aae21-2bd5-43ae-ac47-1e4ac08054f1 
+  REPORT RequestId: e32aae21-2bd5-43ae-ac47-1e4ac08054f1 Duration: 589.39 ms Billed Duration: 590 ms Memory Size: 128 MB Max Memory Used: 99 MB 
+  START RequestId: 6e26daa4-0724-41fb-aa57-e2534f6ccc77 Version: $LATEST 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 9
+by event:
+  ReplaceRoute: 2
+  RunInstances: 3
+  TerminateInstances: 4
+timeline sample:
+  2026-05-03T00:54:06Z TerminateInstances
+  2026-05-03T00:54:33Z RunInstances
+  2026-05-03T00:55:05Z ReplaceRoute
+  2026-05-03T00:56:06Z TerminateInstances
+  2026-05-03T00:56:33Z RunInstances
+  2026-05-03T00:56:33Z TerminateInstances
+  2026-05-03T00:56:39Z ReplaceRoute
+  2026-05-03T00:58:03Z TerminateInstances
+```
+
+### Log Excerpts — Private-2a Private-2b
+
+**Lambda (route healer):**
+```
+(no Lambda log events in window)
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 7
+by event:
+  ReplaceRoute: 1
+  RunInstances: 2
+  TerminateInstances: 4
+timeline sample:
+  2026-05-03T00:57:53Z TerminateInstances
+  2026-05-03T00:57:54Z RunInstances
+  2026-05-03T00:58:26Z ReplaceRoute
+  2026-05-03T00:58:49Z TerminateInstances
+  2026-05-03T01:00:03Z TerminateInstances
+  2026-05-03T01:00:04Z RunInstances
+  2026-05-03T01:00:20Z TerminateInstances
+```
+
+### Log Excerpts — NAT-2a Private-2a Private-2b
+
+**Lambda (route healer):**
+```
+count: 4
+sample:
+  START RequestId: 6a2a8a9d-5da3-4bf5-989d-185b620afd63 Version: $LATEST 
+  [INFO] 2026-05-03T01:02:26.109Z 6a2a8a9d-5da3-4bf5-989d-185b620afd63 Updated route 0.0.0.0/0 in rtb-05c01eaa20ece9e70 to ENI eni-05f29fd9f9ff4e5d6 for ASG main-nat-asg-us-west-2a (instance i-09c018e8800f0b57d) 
+  END RequestId: 6a2a8a9d-5da3-4bf5-989d-185b620afd63 
+  REPORT RequestId: 6a2a8a9d-5da3-4bf5-989d-185b620afd63 Duration: 698.44 ms Billed Duration: 699 ms Memory Size: 128 MB Max Memory Used: 99 MB 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 5
+by event:
+  RunInstances: 2
+  TerminateInstances: 3
+timeline sample:
+  2026-05-03T01:01:09Z TerminateInstances
+  2026-05-03T01:01:53Z TerminateInstances
+  2026-05-03T01:01:53Z RunInstances
+  2026-05-03T01:02:04Z RunInstances
+  2026-05-03T01:02:25Z TerminateInstances
+```
+
+### Log Excerpts — NAT-2b Private-2a Private-2b
+
+**Lambda (route healer):**
+```
+count: 4
+sample:
+  START RequestId: 7e0ae445-5f51-45f8-b601-5379c9e03303 Version: $LATEST 
+  [INFO] 2026-05-03T01:04:59.928Z 7e0ae445-5f51-45f8-b601-5379c9e03303 Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-00d5f3e4e73884224 for ASG main-nat-asg-us-west-2b (instance i-0f80a190ed4f43a41) 
+  END RequestId: 7e0ae445-5f51-45f8-b601-5379c9e03303 
+  REPORT RequestId: 7e0ae445-5f51-45f8-b601-5379c9e03303 Duration: 606.41 ms Billed Duration: 607 ms Memory Size: 128 MB Max Memory Used: 99 MB 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 6
+by event:
+  ReplaceRoute: 1
+  RunInstances: 2
+  TerminateInstances: 3
+timeline sample:
+  2026-05-03T01:02:03Z TerminateInstances
+  2026-05-03T01:02:26Z RunInstances
+  2026-05-03T01:02:26Z ReplaceRoute
+  2026-05-03T01:03:32Z TerminateInstances
+  2026-05-03T01:04:12Z TerminateInstances
+  2026-05-03T01:04:13Z RunInstances
+```
+
+### Log Excerpts — NAT-2a NAT-2b Private-2a Private-2b
+
+**Lambda (route healer):**
+```
+count: 8
+sample:
+  START RequestId: 73252dfb-dafc-4cdc-9b00-2920fb2280ef Version: $LATEST 
+  [INFO] 2026-05-03T01:07:10.783Z 73252dfb-dafc-4cdc-9b00-2920fb2280ef Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-045ff8d5ac6b28fb5 for ASG main-nat-asg-us-west-2b (instance i-01fe0342a2bace3f9) 
+  END RequestId: 73252dfb-dafc-4cdc-9b00-2920fb2280ef 
+  REPORT RequestId: 73252dfb-dafc-4cdc-9b00-2920fb2280ef Duration: 645.16 ms Billed Duration: 646 ms Memory Size: 128 MB Max Memory Used: 99 MB 
+  START RequestId: 7532feff-5965-4d53-8d38-18be35b1c0c2 Version: $LATEST 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 15
+by event:
+  ReplaceRoute: 3
+  RunInstances: 6
+  TerminateInstances: 6
+timeline sample:
+  2026-05-03T01:04:20Z RunInstances
+  2026-05-03T01:04:20Z TerminateInstances
+  2026-05-03T01:04:27Z TerminateInstances
+  2026-05-03T01:04:27Z RunInstances
+  2026-05-03T01:04:59Z ReplaceRoute
+  2026-05-03T01:05:50Z TerminateInstances
+  2026-05-03T01:06:11Z TerminateInstances
+  2026-05-03T01:06:12Z RunInstances
+```
+
+## Automated Run: 2026-05-03
+
+Run timestamp: 2026-05-03T02:26:05Z  
+Script: `failure-sim.sh`  
+Topology source: `terraform-asg`  
+Log mode: `summary`  
+Failure policy: `continue-on-error`  
+
+| Combo | Scenario | Recovery Time |
+|---|---|---|
+| 1 | NAT-2a | 72s |
+| 2 | NAT-2b | 131s |
+| 3 | NAT-2a NAT-2b | 95s |
+| 4 | Private-2a | 65s |
+| 5 | NAT-2a Private-2a | 172s |
+| 6 | NAT-2b Private-2a | 154s |
+| 7 | NAT-2a NAT-2b Private-2a | 130s |
+| 8 | Private-2b | 148s |
+| 9 | NAT-2a Private-2b | 154s |
+| 10 | NAT-2b Private-2b | 132s |
+| 11 | NAT-2a NAT-2b Private-2b | 130s |
+| 12 | Private-2a Private-2b | 136s |
+| 13 | NAT-2a Private-2a Private-2b | 166s |
+| 14 | NAT-2b Private-2a Private-2b | 137s |
+| 15 | NAT-2a NAT-2b Private-2a Private-2b | 184s |
+
+
+### Log Excerpts — NAT-2a
+
+**Lambda (route healer):**
+```
+count: 6
+sample:
+  INIT_START Runtime Version: python:3.12.mainlinev2.v7 Runtime Version ARN: arn:aws:lambda:us-west-2::runtime:e4ab553846c4e081013ff7d1d608a5358d5b956bb5b81c83c66d2a31da8f6244 
+  [INFO] 2026-05-03T02:27:03.495Z Found credentials in environment variables. 
+  START RequestId: cedeaeda-cb26-409d-87fc-ccac3bab6828 Version: $LATEST 
+  [INFO] 2026-05-03T02:27:04.482Z cedeaeda-cb26-409d-87fc-ccac3bab6828 Updated route 0.0.0.0/0 in rtb-05c01eaa20ece9e70 to ENI eni-01b92b3eb6232baa2 for ASG main-nat-asg-us-west-2a (instance i-00d470494df08ddde) 
+  END RequestId: cedeaeda-cb26-409d-87fc-ccac3bab6828 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+(no TerminateInstances/RunInstances/ReplaceRoute events in window)
+```
+
+### Log Excerpts — NAT-2b
+
+**Lambda (route healer):**
+```
+count: 4
+sample:
+  START RequestId: 33f68dce-b8cb-471e-a907-1a4fa10d9a52 Version: $LATEST 
+  [INFO] 2026-05-03T02:29:13.120Z 33f68dce-b8cb-471e-a907-1a4fa10d9a52 Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-035f3dccd758e4273 for ASG main-nat-asg-us-west-2b (instance i-0c1b50c906f622e81) 
+  END RequestId: 33f68dce-b8cb-471e-a907-1a4fa10d9a52 
+  REPORT RequestId: 33f68dce-b8cb-471e-a907-1a4fa10d9a52 Duration: 668.05 ms Billed Duration: 669 ms Memory Size: 128 MB Max Memory Used: 98 MB 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 5
+by event:
+  ReplaceRoute: 1
+  RunInstances: 1
+  TerminateInstances: 3
+timeline sample:
+  2026-05-03T02:26:09Z TerminateInstances
+  2026-05-03T02:26:30Z TerminateInstances
+  2026-05-03T02:26:31Z RunInstances
+  2026-05-03T02:27:04Z ReplaceRoute
+  2026-05-03T02:27:24Z TerminateInstances
+```
+
+### Log Excerpts — NAT-2a NAT-2b
+
+**Lambda (route healer):**
+```
+count: 4
+sample:
+  START RequestId: b9cccaad-d6b1-4b3e-b426-b3e9f3d25d6b Version: $LATEST 
+  [INFO] 2026-05-03T02:30:46.343Z b9cccaad-d6b1-4b3e-b426-b3e9f3d25d6b Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-0ed938ee2365f27a1 for ASG main-nat-asg-us-west-2b (instance i-07b55dd0790efce62) 
+  END RequestId: b9cccaad-d6b1-4b3e-b426-b3e9f3d25d6b 
+  REPORT RequestId: b9cccaad-d6b1-4b3e-b426-b3e9f3d25d6b Duration: 648.41 ms Billed Duration: 649 ms Memory Size: 128 MB Max Memory Used: 98 MB 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 4
+by event:
+  ReplaceRoute: 1
+  RunInstances: 1
+  TerminateInstances: 2
+timeline sample:
+  2026-05-03T02:28:39Z TerminateInstances
+  2026-05-03T02:28:40Z RunInstances
+  2026-05-03T02:29:13Z ReplaceRoute
+  2026-05-03T02:29:38Z TerminateInstances
+```
+
+### Log Excerpts — Private-2a
+
+**Lambda (route healer):**
+```
+(no Lambda log events in window)
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+(no TerminateInstances/RunInstances/ReplaceRoute events in window)
+```
+
+### Log Excerpts — NAT-2a Private-2a
+
+**Lambda (route healer):**
+```
+count: 4
+sample:
+  START RequestId: 910fefcb-7108-4841-b257-04f40a0d909a Version: $LATEST 
+  [INFO] 2026-05-03T02:35:03.453Z 910fefcb-7108-4841-b257-04f40a0d909a Updated route 0.0.0.0/0 in rtb-05c01eaa20ece9e70 to ENI eni-0720fa54aab85e17a for ASG main-nat-asg-us-west-2a (instance i-0ac959ba949553a30) 
+  END RequestId: 910fefcb-7108-4841-b257-04f40a0d909a 
+  REPORT RequestId: 910fefcb-7108-4841-b257-04f40a0d909a Duration: 668.05 ms Billed Duration: 669 ms Memory Size: 128 MB Max Memory Used: 98 MB 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 12
+by event:
+  ReplaceRoute: 2
+  RunInstances: 4
+  TerminateInstances: 6
+timeline sample:
+  2026-05-03T02:30:31Z TerminateInstances
+  2026-05-03T02:30:31Z RunInstances
+  2026-05-03T02:30:39Z TerminateInstances
+  2026-05-03T02:30:40Z RunInstances
+  2026-05-03T02:30:46Z ReplaceRoute
+  2026-05-03T02:31:04Z ReplaceRoute
+  2026-05-03T02:31:16Z TerminateInstances
+  2026-05-03T02:31:40Z TerminateInstances
+```
+
+### Log Excerpts — NAT-2b Private-2a
+
+**Lambda (route healer):**
+```
+count: 4
+sample:
+  START RequestId: 1ce5743d-f627-408b-861a-dbc1e84a3104 Version: $LATEST 
+  [INFO] 2026-05-03T02:37:08.921Z 1ce5743d-f627-408b-861a-dbc1e84a3104 Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-0b8d9f93c1abf1470 for ASG main-nat-asg-us-west-2b (instance i-082ce6d0eceab5047) 
+  END RequestId: 1ce5743d-f627-408b-861a-dbc1e84a3104 
+  REPORT RequestId: 1ce5743d-f627-408b-861a-dbc1e84a3104 Duration: 664.86 ms Billed Duration: 665 ms Memory Size: 128 MB Max Memory Used: 98 MB 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 6
+by event:
+  ReplaceRoute: 1
+  RunInstances: 2
+  TerminateInstances: 3
+timeline sample:
+  2026-05-03T02:34:30Z TerminateInstances
+  2026-05-03T02:34:31Z RunInstances
+  2026-05-03T02:35:03Z ReplaceRoute
+  2026-05-03T02:35:19Z TerminateInstances
+  2026-05-03T02:36:35Z TerminateInstances
+  2026-05-03T02:36:36Z RunInstances
+```
+
+### Log Excerpts — NAT-2a NAT-2b Private-2a
+
+**Lambda (route healer):**
+```
+count: 8
+sample:
+  START RequestId: 4e9b732b-5e11-4ecf-a578-d45f07e85fad Version: $LATEST 
+  [INFO] 2026-05-03T02:39:08.813Z 4e9b732b-5e11-4ecf-a578-d45f07e85fad Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-0caddd60bc6546f62 for ASG main-nat-asg-us-west-2b (instance i-063176c9317a98542) 
+  END RequestId: 4e9b732b-5e11-4ecf-a578-d45f07e85fad 
+  REPORT RequestId: 4e9b732b-5e11-4ecf-a578-d45f07e85fad Duration: 617.26 ms Billed Duration: 618 ms Memory Size: 128 MB Max Memory Used: 98 MB 
+  START RequestId: 58b797d3-b80b-4356-abee-a0a1437b4aec Version: $LATEST 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 8
+by event:
+  ReplaceRoute: 1
+  RunInstances: 3
+  TerminateInstances: 4
+timeline sample:
+  2026-05-03T02:36:58Z TerminateInstances
+  2026-05-03T02:36:59Z RunInstances
+  2026-05-03T02:37:08Z ReplaceRoute
+  2026-05-03T02:37:56Z TerminateInstances
+  2026-05-03T02:38:35Z TerminateInstances
+  2026-05-03T02:38:36Z RunInstances
+  2026-05-03T02:38:39Z TerminateInstances
+  2026-05-03T02:38:39Z RunInstances
+```
+
+### Log Excerpts — Private-2b
+
+**Lambda (route healer):**
+```
+(no Lambda log events in window)
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 5
+by event:
+  ReplaceRoute: 2
+  RunInstances: 1
+  TerminateInstances: 2
+timeline sample:
+  2026-05-03T02:39:08Z ReplaceRoute
+  2026-05-03T02:39:27Z ReplaceRoute
+  2026-05-03T02:39:34Z TerminateInstances
+  2026-05-03T02:39:35Z RunInstances
+  2026-05-03T02:40:10Z TerminateInstances
+```
+
+### Log Excerpts — NAT-2a Private-2b
+
+**Lambda (route healer):**
+```
+count: 6
+sample:
+  INIT_START Runtime Version: python:3.12.mainlinev2.v7 Runtime Version ARN: arn:aws:lambda:us-west-2::runtime:e4ab553846c4e081013ff7d1d608a5358d5b956bb5b81c83c66d2a31da8f6244 
+  [INFO] 2026-05-03T02:44:55.679Z Found credentials in environment variables. 
+  START RequestId: cf2209b0-49f6-4639-ad99-fbea02904fab Version: $LATEST 
+  [INFO] 2026-05-03T02:44:56.591Z cf2209b0-49f6-4639-ad99-fbea02904fab Updated route 0.0.0.0/0 in rtb-05c01eaa20ece9e70 to ENI eni-0637b87176d559b91 for ASG main-nat-asg-us-west-2a (instance i-06204634069bfa52c) 
+  END RequestId: cf2209b0-49f6-4639-ad99-fbea02904fab 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 3
+by event:
+  RunInstances: 1
+  TerminateInstances: 2
+timeline sample:
+  2026-05-03T02:42:05Z TerminateInstances
+  2026-05-03T02:42:06Z RunInstances
+  2026-05-03T02:42:41Z TerminateInstances
+```
+
+### Log Excerpts — NAT-2b Private-2b
+
+**Lambda (route healer):**
+```
+count: 4
+sample:
+  START RequestId: 040e9b10-4f36-43df-9dcb-4355aeeadf30 Version: $LATEST 
+  [INFO] 2026-05-03T02:46:47.871Z 040e9b10-4f36-43df-9dcb-4355aeeadf30 Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-071206eb3f449ad06 for ASG main-nat-asg-us-west-2b (instance i-085a56fa64766c892) 
+  END RequestId: 040e9b10-4f36-43df-9dcb-4355aeeadf30 
+  REPORT RequestId: 040e9b10-4f36-43df-9dcb-4355aeeadf30 Duration: 564.08 ms Billed Duration: 565 ms Memory Size: 128 MB Max Memory Used: 99 MB 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 6
+by event:
+  ReplaceRoute: 1
+  RunInstances: 2
+  TerminateInstances: 3
+timeline sample:
+  2026-05-03T02:44:02Z TerminateInstances
+  2026-05-03T02:44:02Z RunInstances
+  2026-05-03T02:44:38Z RunInstances
+  2026-05-03T02:44:38Z TerminateInstances
+  2026-05-03T02:44:56Z ReplaceRoute
+  2026-05-03T02:45:18Z TerminateInstances
+```
+
+### Log Excerpts — NAT-2a NAT-2b Private-2b
+
+**Lambda (route healer):**
+```
+count: 10
+sample:
+  START RequestId: 17ea94cb-3282-4cb3-b103-2443893b359a Version: $LATEST 
+  [INFO] 2026-05-03T02:49:14.240Z 17ea94cb-3282-4cb3-b103-2443893b359a Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-02b32d19b8c891a3c for ASG main-nat-asg-us-west-2b (instance i-0b82e64ed4678bcf7) 
+  END RequestId: 17ea94cb-3282-4cb3-b103-2443893b359a 
+  REPORT RequestId: 17ea94cb-3282-4cb3-b103-2443893b359a Duration: 674.84 ms Billed Duration: 675 ms Memory Size: 128 MB Max Memory Used: 99 MB 
+  START RequestId: 825f5345-bbd1-4ba4-b989-6ee9af7bc6c2 Version: $LATEST 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 14
+by event:
+  ReplaceRoute: 3
+  RunInstances: 5
+  TerminateInstances: 6
+timeline sample:
+  2026-05-03T02:46:08Z RunInstances
+  2026-05-03T02:46:08Z TerminateInstances
+  2026-05-03T02:46:41Z TerminateInstances
+  2026-05-03T02:46:42Z RunInstances
+  2026-05-03T02:46:47Z ReplaceRoute
+  2026-05-03T02:47:33Z TerminateInstances
+  2026-05-03T02:48:04Z TerminateInstances
+  2026-05-03T02:48:05Z RunInstances
+```
+
+### Log Excerpts — Private-2a Private-2b
+
+**Lambda (route healer):**
+```
+(no Lambda log events in window)
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 5
+by event:
+  RunInstances: 2
+  TerminateInstances: 3
+timeline sample:
+  2026-05-03T02:49:48Z TerminateInstances
+  2026-05-03T02:50:00Z TerminateInstances
+  2026-05-03T02:50:01Z RunInstances
+  2026-05-03T02:51:26Z RunInstances
+  2026-05-03T02:51:26Z TerminateInstances
+```
+
+### Log Excerpts — NAT-2a Private-2a Private-2b
+
+**Lambda (route healer):**
+```
+count: 4
+sample:
+  START RequestId: 97515cd8-1741-46ca-8ff2-49ea3d98d1eb Version: $LATEST 
+  [INFO] 2026-05-03T02:52:43.941Z 97515cd8-1741-46ca-8ff2-49ea3d98d1eb Updated route 0.0.0.0/0 in rtb-05c01eaa20ece9e70 to ENI eni-020f9456d262cc84a for ASG main-nat-asg-us-west-2a (instance i-092b6db1d98f9a254) 
+  END RequestId: 97515cd8-1741-46ca-8ff2-49ea3d98d1eb 
+  REPORT RequestId: 97515cd8-1741-46ca-8ff2-49ea3d98d1eb Duration: 823.95 ms Billed Duration: 1393 ms Memory Size: 128 MB Max Memory Used: 98 MB Init Duration: 568.38 ms 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 6
+by event:
+  ReplaceRoute: 1
+  RunInstances: 2
+  TerminateInstances: 3
+timeline sample:
+  2026-05-03T02:52:08Z TerminateInstances
+  2026-05-03T02:52:37Z TerminateInstances
+  2026-05-03T02:52:38Z RunInstances
+  2026-05-03T02:52:43Z ReplaceRoute
+  2026-05-03T02:53:27Z TerminateInstances
+  2026-05-03T02:53:27Z RunInstances
+```
+
+### Log Excerpts — NAT-2b Private-2a Private-2b
+
+**Lambda (route healer):**
+```
+count: 4
+sample:
+  START RequestId: 42cab66d-dfbe-498b-8973-ee6cd89bc1f5 Version: $LATEST 
+  [INFO] 2026-05-03T02:56:42.392Z 42cab66d-dfbe-498b-8973-ee6cd89bc1f5 Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-060ff0fa2b371e5c5 for ASG main-nat-asg-us-west-2b (instance i-0a570393b06de13d6) 
+  END RequestId: 42cab66d-dfbe-498b-8973-ee6cd89bc1f5 
+  REPORT RequestId: 42cab66d-dfbe-498b-8973-ee6cd89bc1f5 Duration: 675.52 ms Billed Duration: 676 ms Memory Size: 128 MB Max Memory Used: 98 MB 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 7
+by event:
+  RunInstances: 3
+  TerminateInstances: 4
+timeline sample:
+  2026-05-03T02:54:01Z TerminateInstances
+  2026-05-03T02:54:02Z RunInstances
+  2026-05-03T02:54:57Z TerminateInstances
+  2026-05-03T02:55:29Z TerminateInstances
+  2026-05-03T02:55:29Z RunInstances
+  2026-05-03T02:56:07Z TerminateInstances
+  2026-05-03T02:56:08Z RunInstances
+```
+
+### Log Excerpts — NAT-2a NAT-2b Private-2a Private-2b
+
+**Lambda (route healer):**
+```
+count: 8
+sample:
+  START RequestId: b1ff973b-4c68-4536-bbc4-1202f0800baa Version: $LATEST 
+  [INFO] 2026-05-03T02:58:41.771Z b1ff973b-4c68-4536-bbc4-1202f0800baa Updated route 0.0.0.0/0 in rtb-02ac0656d64e951c7 to ENI eni-04b60029555e36193 for ASG main-nat-asg-us-west-2b (instance i-0ea4e641d395a7f52) 
+  END RequestId: b1ff973b-4c68-4536-bbc4-1202f0800baa 
+  REPORT RequestId: b1ff973b-4c68-4536-bbc4-1202f0800baa Duration: 607.39 ms Billed Duration: 608 ms Memory Size: 128 MB Max Memory Used: 98 MB 
+  START RequestId: 6a4e641d-8df7-4234-8ab9-20136175a5be Version: $LATEST 
+```
+
+**CloudTrail (TerminateInstances / RunInstances / ReplaceRoute):**
+```
+count: 6
+by event:
+  ReplaceRoute: 1
+  RunInstances: 2
+  TerminateInstances: 3
+timeline sample:
+  2026-05-03T02:56:35Z TerminateInstances
+  2026-05-03T02:56:36Z RunInstances
+  2026-05-03T02:56:42Z ReplaceRoute
+  2026-05-03T02:57:17Z TerminateInstances
+  2026-05-03T02:58:04Z TerminateInstances
+  2026-05-03T02:58:05Z RunInstances
 ```

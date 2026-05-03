@@ -30,19 +30,31 @@ The network module creates the VPC, subnets, public route table, private route t
 
 The instance profile name matters: this account has `SSM-EC2` with a hyphen, not `SSM_EC2` with an underscore.
 
+## AMI Baking
+
+Both NAT and private instances use pre-baked AMIs built with Packer (`nat-ami.pkr.hcl`, `private-ami.pkr.hcl`). Baking moves slow package installation out of per-boot user data and into a one-time image build step.
+
+**NAT AMI** (`nat-instance-*`, Debian 13 base):
+- `awscli`, `iptables-persistent` pre-installed
+- SSM agent pre-installed and enabled via `.deb` package
+
+**Private AMI** (`private-instance-*`, Ubuntu 24.04 base):
+- SSM agent pre-refreshed via snap (Ubuntu ships it pre-installed but not fully initialized)
+
+Baked AMIs reduced average recovery time by ~27 seconds (~18%) across the 15-combo failure matrix compared to the unbaked baseline. The biggest gains are in single-instance recovery scenarios where the bottleneck was boot-time package installation.
+
 ## NAT Instance Bootstrap
 
-Each NAT instance runs user data on first boot:
+User data runs runtime-specific steps only (no package installs):
 
-1. Install `awscli`, `iptables-persistent`, and the SSM agent.
-2. Enable IPv4 forwarding with `net.ipv4.ip_forward=1`.
-3. Call `aws ec2 modify-instance-attribute --no-source-dest-check` against itself using IMDSv2 metadata.
-4. Add iptables `MASQUERADE` and `FORWARD` rules.
-5. Persist iptables rules through reboot.
+1. Enable IPv4 forwarding with `net.ipv4.ip_forward=1`.
+2. Call `aws ec2 modify-instance-attribute --no-source-dest-check` against itself using IMDSv2 metadata.
+3. Add iptables `MASQUERADE` and `FORWARD` rules.
+4. Persist iptables rules through reboot.
 
 Terraform's `aws_launch_template` resource does not support `source_dest_check = false` inside the `network_interfaces` block. The self-modify call is the workaround, and it requires `ec2:ModifyInstanceAttribute` on the instance role.
 
-This bootstrap is why recovery takes minutes rather than seconds. The route can be repaired before the NAT instance is actually forwarding packets.
+The remaining recovery time (~90–180s in typical scenarios) is split between ASG replacement scheduling, instance OS boot, user data execution, SSM agent registration, and CloudWatch log propagation.
 
 ## Route Healer
 

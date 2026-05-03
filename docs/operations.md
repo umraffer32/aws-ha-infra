@@ -24,8 +24,10 @@ Root variables live in `variables.tf`.
 | `region` | `us-west-2` | AWS region |
 | `aws_profile` | `mrpocket2726` | Local AWS CLI/SSO profile |
 | `project_name` | `ha` | Resource name prefix and tag value |
-| `debian_version` | `13` | Debian major version for NAT AMI lookup |
-| `ubuntu_version` | `24.04` | Ubuntu LTS version for private instance AMI lookup |
+| `debian_version` | `13` | Debian major version used as Packer source AMI base for NAT images |
+| `ubuntu_version` | `24.04` | Ubuntu LTS version used as Packer source AMI base for private images |
+
+Note: the compute module looks up live AMIs from self-owned baked images (`nat-instance-*` and `private-instance-*`), not directly from Debian/Ubuntu. These variables only control which base OS Packer builds on top of.
 
 Override with CLI flags, a local `terraform.tfvars`, or `TF_VAR_` environment variables.
 
@@ -85,6 +87,9 @@ Useful Terraform outputs include VPC ID, subnet IDs, NAT ASG names, private ASG 
   outputs.tf
   providers.tf
   data.tf
+  nat-ami.pkr.hcl       # Packer build for NAT instances (Debian 13)
+  private-ami.pkr.hcl   # Packer build for private instances (Ubuntu 24.04)
+  failure-sim.sh         # 15-combo failure simulation script
   ssm-connect.sh
   README.md
   docs/
@@ -102,6 +107,31 @@ Module responsibilities:
 - `modules/nat_route_healer/`: EventBridge, Lambda, IAM, and route replacement logic.
 - `modules/monitoring/`: CloudTrail, CloudWatch Logs, metric filters, alarms, dashboard, and CloudTrail S3 backing bucket.
 
+## AMI Management
+
+NAT and private instances use pre-baked Packer AMIs. Rebuild when the base OS needs patching or dependencies change:
+
+```bash
+packer build nat-ami.pkr.hcl        # builds nat-instance-<timestamp>
+packer build private-ami.pkr.hcl    # builds private-instance-<timestamp>
+```
+
+After a build completes, `terraform apply` picks up the new AMI automatically (data sources use `most_recent = true`). Existing instances are not replaced until you trigger an instance refresh:
+
+```bash
+aws autoscaling start-instance-refresh \
+  --auto-scaling-group-name main-nat-asg-us-west-2a \
+  --preferences '{"MinHealthyPercentage":0}' \
+  --profile mrpocket2726 --region us-west-2
+
+aws autoscaling start-instance-refresh \
+  --auto-scaling-group-name main-nat-asg-us-west-2b \
+  --preferences '{"MinHealthyPercentage":0}' \
+  --profile mrpocket2726 --region us-west-2
+```
+
+Repeat for `main-private-asg-us-west-2a` and `main-private-asg-us-west-2b` for private instances.
+
 ## Cost Management
 
 Approximate monthly baseline for the current two-AZ demo shape:
@@ -118,7 +148,7 @@ Run `terraform destroy` when the environment is not needed.
 ## Operational Gotchas
 
 - The private route points to a NAT instance ENI, so route repair is needed whenever a NAT ASG replaces an instance.
-- The route healer updates the route after launch, but NAT user data can still be running. A route can be active before packet forwarding is ready.
+- The route healer updates the route after launch, but NAT user data can still be running. A route can be active before packet forwarding is ready. With baked AMIs, user data runs in ~10-15s (runtime config only — no package installs), so this window is shorter than it used to be.
 - EventBridge delivery is best effort. Alarms cover Lambda and EventBridge health, but there is no DLQ yet. Fallback is `terraform apply`.
 - `terraform.tfstate` is committed for demo simplicity. Production should use an S3 backend with versioning and DynamoDB locking.
 - The ASGs use min/max/desired of 1 per AZ, so there is a zero-instance gap during replacement.
